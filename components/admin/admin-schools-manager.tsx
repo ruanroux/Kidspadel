@@ -2,9 +2,9 @@
 
 import { useState, useTransition, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Plus, Pencil, Trash2, X, Upload, Globe, Phone, Mail, MapPin, User, ExternalLink } from "lucide-react"
+import { Plus, Pencil, X, Upload, Globe, Phone, Mail, MapPin, User, ExternalLink, PowerOff, RotateCcw } from "lucide-react"
 import type { School } from "@/lib/db/schema"
-import { createSchool, updateSchool, deleteSchool, type SchoolInput } from "@/app/actions/schools"
+import { createSchool, updateSchool, deactivateSchool, reactivateSchool, type SchoolInput } from "@/app/actions/schools"
 
 const EMPTY: SchoolInput = {
   name: "",
@@ -229,8 +229,10 @@ export function AdminSchoolsManager({ initialSchools }: { initialSchools: School
   const [schools, setSchools] = useState<School[]>(initialSchools)
   const [editing, setEditing] = useState<School | null>(null)
   const [creating, setCreating] = useState(false)
-  const [deletingId, setDeletingId] = useState<number | null>(null)
   const [pending, startTransition] = useTransition()
+  const [filter, setFilter] = useState<"active" | "inactive" | "all">("active")
+  const [confirmDeactivate, setConfirmDeactivate] = useState<{ id: number; name: string } | null>(null)
+  const [confirmReactivate, setConfirmReactivate] = useState<{ id: number; name: string } | null>(null)
 
   function handleSave(input: SchoolInput, id?: number) {
     startTransition(async () => {
@@ -245,18 +247,31 @@ export function AdminSchoolsManager({ initialSchools }: { initialSchools: School
     })
   }
 
-  function handleDelete(id: number) {
+  function handleDeactivate(id: number) {
     startTransition(async () => {
-      await deleteSchool(id)
-      setDeletingId(null)
+      await deactivateSchool(id)
+      setConfirmDeactivate(null)
       router.refresh()
     })
   }
 
+  function handleReactivate(id: number) {
+    startTransition(async () => {
+      await reactivateSchool(id)
+      setConfirmReactivate(null)
+      router.refresh()
+    })
+  }
+
+  const activeSchools = schools.filter((s) => s.published)
+  const inactiveSchools = schools.filter((s) => !s.published)
+  const visibleSchools =
+    filter === "active" ? activeSchools : filter === "inactive" ? inactiveSchools : schools
+
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-bold text-navy">Schools ({schools.length})</h2>
+        <h2 className="text-xl font-bold text-navy">Schools</h2>
         <button
           onClick={() => { setCreating(true); setEditing(null) }}
           className="inline-flex items-center gap-2 rounded-md bg-lime px-4 py-2 text-sm font-bold text-lime-foreground transition-colors hover:bg-lime/90"
@@ -264,6 +279,22 @@ export function AdminSchoolsManager({ initialSchools }: { initialSchools: School
           <Plus className="h-4 w-4" />
           Add School
         </button>
+      </div>
+
+      {/* Filter tabs */}
+      <div className="mt-4 flex gap-1 rounded-lg border border-border bg-muted/40 p-1 w-fit">
+        {(["active", "inactive", "all"] as const).map((f) => {
+          const count = f === "active" ? activeSchools.length : f === "inactive" ? inactiveSchools.length : schools.length
+          return (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`rounded-md px-4 py-1.5 text-sm font-semibold transition-colors ${filter === f ? "bg-card text-navy shadow-sm" : "text-muted-foreground hover:text-navy"}`}
+            >
+              {f === "active" ? "Active" : f === "inactive" ? "Inactive" : "All"} ({count})
+            </button>
+          )
+        })}
       </div>
 
       {/* Create form */}
@@ -275,11 +306,13 @@ export function AdminSchoolsManager({ initialSchools }: { initialSchools: School
       )}
 
       {/* School list */}
-      <div className="mt-6 grid gap-4">
-        {schools.length === 0 && !creating && (
-          <p className="text-sm text-muted-foreground">No schools added yet. Click &quot;Add School&quot; to get started.</p>
+      <div className="mt-4 grid gap-4">
+        {visibleSchools.length === 0 && !creating && (
+          <p className="text-sm text-muted-foreground">
+            {filter === "inactive" ? "No inactive schools." : filter === "active" ? "No active schools yet. Click \"Add School\" to get started." : "No schools added yet."}
+          </p>
         )}
-        {schools.map((school) => {
+        {visibleSchools.map((school) => {
           const logo = school.logoUrl ?? null
           return (
             <article key={school.id} className="rounded-card border border-border bg-card p-5 shadow-sm">
@@ -294,6 +327,7 @@ export function AdminSchoolsManager({ initialSchools }: { initialSchools: School
                   <SchoolForm school={school} pending={pending} onSubmit={(input) => handleSave(input, school.id)} onCancel={() => setEditing(null)} />
                 </>
               ) : (
+                <>
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="flex items-start gap-4">
                     {/* Logo */}
@@ -308,10 +342,10 @@ export function AdminSchoolsManager({ initialSchools }: { initialSchools: School
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <h3 className="font-bold text-navy">{school.name}</h3>
-                        {!school.published && (
-                          <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-semibold text-muted-foreground">
-                            Hidden
-                          </span>
+                        {school.published ? (
+                          <span className="rounded-full bg-lime/20 border border-lime/40 px-2 py-0.5 text-xs font-bold text-lime-800">Active</span>
+                        ) : (
+                          <span className="rounded-full bg-muted border border-muted-foreground/20 px-2 py-0.5 text-xs font-semibold text-muted-foreground">Inactive</span>
                         )}
                       </div>
                       {school.location && (
@@ -343,37 +377,82 @@ export function AdminSchoolsManager({ initialSchools }: { initialSchools: School
                   </div>
 
                   {/* Actions */}
-                  <div className="flex shrink-0 gap-2">
+                  <div className="flex shrink-0 flex-wrap gap-2">
                     <button
                       onClick={() => { setEditing(school); setCreating(false) }}
                       className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-muted"
                     >
                       <Pencil className="h-3.5 w-3.5" /> Edit
                     </button>
-                    {deletingId === school.id ? (
-                      <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-1.5">
-                        <span className="text-xs font-semibold text-destructive">Delete?</span>
-                        <button
-                          onClick={() => handleDelete(school.id)}
-                          disabled={pending}
-                          className="text-xs font-bold text-destructive hover:underline"
-                        >
-                          Yes
-                        </button>
-                        <button onClick={() => setDeletingId(null)} className="text-xs font-bold hover:underline">
-                          No
-                        </button>
-                      </div>
+                    {school.published ? (
+                      <button
+                        onClick={() => setConfirmDeactivate({ id: school.id, name: school.name })}
+                        disabled={pending}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-100 disabled:opacity-50"
+                      >
+                        <PowerOff className="h-3.5 w-3.5" /> Make Inactive
+                      </button>
                     ) : (
                       <button
-                        onClick={() => setDeletingId(school.id)}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-destructive/30 px-3 py-1.5 text-xs font-semibold text-destructive transition-colors hover:bg-destructive/10"
+                        onClick={() => setConfirmReactivate({ id: school.id, name: school.name })}
+                        disabled={pending}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-lime/40 bg-lime/10 px-3 py-1.5 text-xs font-semibold text-lime-800 transition-colors hover:bg-lime/20 disabled:opacity-50"
                       >
-                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                        <RotateCcw className="h-3.5 w-3.5" /> Reactivate
                       </button>
                     )}
                   </div>
                 </div>
+                {/* end header row */}
+
+                {/* Deactivate confirmation */}
+                {confirmDeactivate?.id === school.id && (
+                  <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-4">
+                    <p className="text-sm font-semibold text-amber-800">
+                      Make <strong>{school.name}</strong> Inactive? The school will be hidden from registrations. All data is preserved.
+                    </p>
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        onClick={() => handleDeactivate(school.id)}
+                        disabled={pending}
+                        className="rounded-md bg-amber-600 px-4 py-1.5 text-sm font-bold text-white disabled:opacity-50 hover:bg-amber-700"
+                      >
+                        {pending ? "Saving…" : "Yes, make Inactive"}
+                      </button>
+                      <button
+                        onClick={() => setConfirmDeactivate(null)}
+                        className="rounded-md border border-border px-4 py-1.5 text-sm font-semibold text-navy hover:bg-muted"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Reactivate confirmation */}
+                {confirmReactivate?.id === school.id && (
+                  <div className="mt-4 rounded-md border border-lime/30 bg-lime/5 p-4">
+                    <p className="text-sm font-semibold text-navy">
+                      Reactivate <strong>{school.name}</strong>? The school will become available for new registrations again.
+                    </p>
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        onClick={() => handleReactivate(school.id)}
+                        disabled={pending}
+                        className="rounded-md bg-lime px-4 py-1.5 text-sm font-bold text-lime-foreground disabled:opacity-50 hover:bg-lime/90"
+                      >
+                        {pending ? "Saving…" : "Yes, reactivate"}
+                      </button>
+                      <button
+                        onClick={() => setConfirmReactivate(null)}
+                        className="rounded-md border border-border px-4 py-1.5 text-sm font-semibold text-navy hover:bg-muted"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+                </>
               )}
             </article>
           )

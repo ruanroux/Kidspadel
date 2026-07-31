@@ -2,11 +2,12 @@
 
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { Pencil, Trash2, Plus, Check, X } from "lucide-react"
+import { Pencil, Plus, Check, X, PowerOff, RotateCcw } from "lucide-react"
 import {
   createPackage,
   updatePackage,
-  deletePackage,
+  deactivatePackage,
+  reactivatePackage,
   getPackageSlots,
   type PublicPackage,
   type PackageInput,
@@ -53,8 +54,14 @@ export function AdminPackageManager({
   const router = useRouter()
   const [editing, setEditing] = useState<{ pkg: PublicPackage; slots: CustomSlot[] } | null>(null)
   const [creating, setCreating] = useState(false)
-  const [deletingId, setDeletingId] = useState<number | null>(null)
   const [pending, startTransition] = useTransition()
+  // Active/Inactive filter: "active" | "inactive" | "all"
+  const [filter, setFilter] = useState<"active" | "inactive" | "all">("active")
+  // Confirm deactivate: { id, name }
+  const [confirmDeactivate, setConfirmDeactivate] = useState<{ id: number; name: string } | null>(null)
+  // Confirm reactivate: { id, name }
+  const [confirmReactivate, setConfirmReactivate] = useState<{ id: number; name: string; count?: number } | null>(null)
+  const [reactivateEnrollments, setReactivateEnrollments] = useState(false)
 
   function openCreate() {
     setCreating(true)
@@ -83,10 +90,19 @@ export function AdminPackageManager({
     })
   }
 
-  function handleDelete(id: number) {
+  function handleDeactivate(id: number) {
     startTransition(async () => {
-      await deletePackage(id)
-      setDeletingId(null)
+      await deactivatePackage(id)
+      setConfirmDeactivate(null)
+      router.refresh()
+    })
+  }
+
+  function handleReactivate(id: number) {
+    startTransition(async () => {
+      await reactivatePackage(id, reactivateEnrollments)
+      setConfirmReactivate(null)
+      setReactivateEnrollments(false)
       router.refresh()
     })
   }
@@ -95,10 +111,15 @@ export function AdminPackageManager({
     return p === "once-off" ? "once off" : "/month"
   }
 
+  const activePackages = initialPackages.filter((p) => p.published)
+  const inactivePackages = initialPackages.filter((p) => !p.published)
+  const visiblePackages =
+    filter === "active" ? activePackages : filter === "inactive" ? inactivePackages : initialPackages
+
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-bold text-navy">Packages ({initialPackages.length})</h2>
+        <h2 className="text-xl font-bold text-navy">Packages</h2>
         <button
           onClick={openCreate}
           className="inline-flex items-center gap-2 rounded-md bg-lime px-4 py-2 text-sm font-bold text-lime-foreground transition-colors hover:bg-lime/90"
@@ -108,22 +129,36 @@ export function AdminPackageManager({
         </button>
       </div>
 
-      <div className="mt-6 grid gap-4">
-        {initialPackages.map((pkg) => (
-          <article key={pkg.id} className="rounded-card border border-border bg-card p-5 shadow-sm">
+      {/* Filter tabs */}
+      <div className="mt-4 flex gap-1 rounded-lg border border-border bg-muted/40 p-1 w-fit">
+        {(["active", "inactive", "all"] as const).map((f) => {
+          const count = f === "active" ? activePackages.length : f === "inactive" ? inactivePackages.length : initialPackages.length
+          return (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`rounded-md px-4 py-1.5 text-sm font-semibold transition-colors ${filter === f ? "bg-card text-navy shadow-sm" : "text-muted-foreground hover:text-navy"}`}
+            >
+              {f === "active" ? "Active" : f === "inactive" ? "Inactive" : "All"} ({count})
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="mt-4 grid gap-4">
+        {visiblePackages.map((pkg) => (
+          <article key={pkg.id} className={`rounded-card border bg-card p-5 shadow-sm ${!pkg.published ? "border-dashed border-muted-foreground/30 opacity-80" : "border-border"}`}>
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-lg font-bold text-navy">{pkg.name}</h3>
-                  {pkg.popular && (
-                    <span className="rounded-full bg-lime px-2 py-0.5 text-xs font-bold text-lime-foreground">
-                      Popular
-                    </span>
+                  {pkg.published ? (
+                    <span className="rounded-full bg-lime/20 border border-lime/40 px-2 py-0.5 text-xs font-bold text-lime-800">Active</span>
+                  ) : (
+                    <span className="rounded-full bg-muted border border-muted-foreground/20 px-2 py-0.5 text-xs font-semibold text-muted-foreground">Inactive</span>
                   )}
-                  {!pkg.published && (
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-semibold text-muted-foreground">
-                      Hidden
-                    </span>
+                  {pkg.popular && (
+                    <span className="rounded-full bg-lime px-2 py-0.5 text-xs font-bold text-lime-foreground">Popular</span>
                   )}
                   <span className="rounded-full border border-border px-2 py-0.5 text-xs font-semibold text-muted-foreground">
                     {pkg.slotType === "custom" ? "Custom slots" : "Standard slots"}
@@ -168,31 +203,77 @@ export function AdminPackageManager({
                   <Pencil className="h-4 w-4 text-lime" />
                   Edit
                 </button>
-                <button
-                  onClick={() => setDeletingId(pkg.id)}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-destructive/40 px-3 py-1.5 text-sm font-semibold text-destructive transition-colors hover:bg-destructive/10"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  Delete
-                </button>
+                {pkg.published ? (
+                  <button
+                    onClick={() => setConfirmDeactivate({ id: pkg.id, name: pkg.name })}
+                    disabled={pending}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-semibold text-amber-700 transition-colors hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    <PowerOff className="h-4 w-4" />
+                    Make Inactive
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setConfirmReactivate({ id: pkg.id, name: pkg.name })}
+                    disabled={pending}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-lime/40 bg-lime/10 px-3 py-1.5 text-sm font-semibold text-lime-800 transition-colors hover:bg-lime/20 disabled:opacity-50"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Reactivate
+                  </button>
+                )}
               </div>
             </div>
 
-            {deletingId === pkg.id && (
-              <div className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 p-4">
-                <p className="text-sm font-semibold text-destructive">
-                  Delete {pkg.name}? Existing enrollments are unaffected.
+            {/* Deactivate confirmation */}
+            {confirmDeactivate?.id === pkg.id && (
+              <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-4">
+                <p className="text-sm font-semibold text-amber-800">
+                  Make <strong>{pkg.name}</strong> Inactive? All active and pending enrollments on this package will also be made Inactive. No data will be deleted.
                 </p>
                 <div className="mt-3 flex gap-2">
                   <button
-                    onClick={() => handleDelete(pkg.id)}
+                    onClick={() => handleDeactivate(pkg.id)}
                     disabled={pending}
-                    className="rounded-md bg-destructive px-4 py-1.5 text-sm font-bold text-destructive-foreground disabled:opacity-50"
+                    className="rounded-md bg-amber-600 px-4 py-1.5 text-sm font-bold text-white disabled:opacity-50 hover:bg-amber-700"
                   >
-                    {pending ? "Deleting…" : "Yes, delete"}
+                    {pending ? "Saving…" : "Yes, make Inactive"}
                   </button>
                   <button
-                    onClick={() => setDeletingId(null)}
+                    onClick={() => setConfirmDeactivate(null)}
+                    className="rounded-md border border-border px-4 py-1.5 text-sm font-semibold text-navy hover:bg-muted"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Reactivate confirmation */}
+            {confirmReactivate?.id === pkg.id && (
+              <div className="mt-4 rounded-md border border-lime/30 bg-lime/5 p-4">
+                <p className="text-sm font-semibold text-navy">
+                  Reactivate <strong>{pkg.name}</strong>? The package will become available again for new registrations.
+                </p>
+                <label className="mt-3 flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={reactivateEnrollments}
+                    onChange={(e) => setReactivateEnrollments(e.target.checked)}
+                    className="h-4 w-4 accent-lime"
+                  />
+                  <span className="text-sm text-navy">Also reactivate all inactive enrollments on this package</span>
+                </label>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={() => handleReactivate(pkg.id)}
+                    disabled={pending}
+                    className="rounded-md bg-lime px-4 py-1.5 text-sm font-bold text-lime-foreground disabled:opacity-50 hover:bg-lime/90"
+                  >
+                    {pending ? "Saving…" : "Yes, reactivate"}
+                  </button>
+                  <button
+                    onClick={() => { setConfirmReactivate(null); setReactivateEnrollments(false) }}
                     className="rounded-md border border-border px-4 py-1.5 text-sm font-semibold text-navy hover:bg-muted"
                   >
                     Cancel
@@ -203,9 +284,9 @@ export function AdminPackageManager({
           </article>
         ))}
 
-        {initialPackages.length === 0 && (
+        {visiblePackages.length === 0 && (
           <p className="rounded-card border border-dashed border-border bg-card p-8 text-center text-muted-foreground">
-            No packages yet. Click &quot;Add Package&quot; to create your first one.
+            {filter === "inactive" ? "No inactive packages." : filter === "active" ? "No active packages yet. Click \"Add Package\" to create your first one." : "No packages yet."}
           </p>
         )}
       </div>

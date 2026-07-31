@@ -306,6 +306,45 @@ export async function updatePackage(id: number, input: PackageInput) {
   revalidatePaths()
 }
 
+/**
+ * Make a package Inactive (published=false).
+ * Simultaneously sets every active/pending enrollment on this package to "inactive".
+ * No records are deleted — all data is preserved.
+ */
+export async function deactivatePackage(id: number): Promise<{ ok: boolean; deactivatedEnrollments: number }> {
+  await requireAdmin()
+  await db.update(packages).set({ published: false, updatedAt: new Date() }).where(eq(packages.id, id))
+  const result = await db
+    .update(enrollments)
+    .set({ status: "inactive", updatedAt: new Date() })
+    .where(and(eq(enrollments.packageName, (await db.select({ name: packages.name }).from(packages).where(eq(packages.id, id)).limit(1))[0]?.name ?? ""), inArray(enrollments.status, ["active", "pending"])))
+  revalidatePaths()
+  return { ok: true, deactivatedEnrollments: result.rowCount ?? 0 }
+}
+
+/**
+ * Reactivate a package (published=true).
+ * Optionally reactivates all enrollments that were deactivated by this package.
+ */
+export async function reactivatePackage(id: number, reactivateEnrollments: boolean): Promise<{ ok: boolean; reactivatedEnrollments: number }> {
+  await requireAdmin()
+  await db.update(packages).set({ published: true, updatedAt: new Date() }).where(eq(packages.id, id))
+  let count = 0
+  if (reactivateEnrollments) {
+    const pkg = await db.select({ name: packages.name }).from(packages).where(eq(packages.id, id)).limit(1)
+    if (pkg[0]) {
+      const result = await db
+        .update(enrollments)
+        .set({ status: "active", updatedAt: new Date() })
+        .where(and(eq(enrollments.packageName, pkg[0].name), eq(enrollments.status, "inactive")))
+      count = result.rowCount ?? 0
+    }
+  }
+  revalidatePaths()
+  return { ok: true, reactivatedEnrollments: count }
+}
+
+/** @deprecated Use deactivatePackage instead — production records must never be deleted. */
 export async function deletePackage(id: number) {
   await requireAdmin()
   await db.delete(packageSlots).where(eq(packageSlots.packageId, id))

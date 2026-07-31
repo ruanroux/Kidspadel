@@ -84,7 +84,29 @@ export async function updateSchool(id: number, input: SchoolInput): Promise<Scho
   return row
 }
 
-/** Delete a school (admin only). */
+/**
+ * Make a school Inactive (published=false). No records are deleted.
+ */
+export async function deactivateSchool(id: number): Promise<void> {
+  await requireAdmin()
+  await db.update(schools).set({ published: false, updatedAt: new Date() }).where(eq(schools.id, id))
+  revalidatePath("/schools")
+  revalidatePath("/admin")
+  revalidatePath("/enrollment")
+}
+
+/**
+ * Reactivate a school (published=true). No records are deleted.
+ */
+export async function reactivateSchool(id: number): Promise<void> {
+  await requireAdmin()
+  await db.update(schools).set({ published: true, updatedAt: new Date() }).where(eq(schools.id, id))
+  revalidatePath("/schools")
+  revalidatePath("/admin")
+  revalidatePath("/enrollment")
+}
+
+/** @deprecated Use deactivateSchool instead — production records must never be deleted. */
 export async function deleteSchool(id: number): Promise<void> {
   await requireAdmin()
   await db.delete(schools).where(eq(schools.id, id))

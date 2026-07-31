@@ -97,6 +97,27 @@ export async function updateClub(id: number, input: ClubInput) {
   return { success: true }
 }
 
+/**
+ * Make a club Inactive (published=false). No records are deleted.
+ */
+export async function deactivateClub(id: number): Promise<{ success: true }> {
+  await requireAdmin()
+  await db.update(clubs).set({ published: false, updatedAt: new Date() }).where(eq(clubs.id, id))
+  revalidateClubPaths()
+  return { success: true }
+}
+
+/**
+ * Reactivate a club (published=true). No records are deleted.
+ */
+export async function reactivateClub(id: number): Promise<{ success: true }> {
+  await requireAdmin()
+  await db.update(clubs).set({ published: true, updatedAt: new Date() }).where(eq(clubs.id, id))
+  revalidateClubPaths()
+  return { success: true }
+}
+
+/** @deprecated Use deactivateClub instead — production records must never be deleted. */
 export async function deleteClub(id: number) {
   await requireAdmin()
   await db.delete(clubSlots).where(eq(clubSlots.clubId, id))

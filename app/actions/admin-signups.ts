@@ -240,7 +240,38 @@ export async function resendWelcome(id: number): Promise<{ ok: boolean; error?: 
   })
 }
 
-/** Permanently delete a sign-up record. */
+/**
+ * Make an enrollment Inactive (status="inactive").
+ * All data — parent info, student info, package, club, attendance, payment history — is preserved.
+ * Only the status changes.
+ */
+export async function deactivateSignup(id: number): Promise<{ ok: boolean; error?: string }> {
+  await requireAdmin()
+  try {
+    await db.update(enrollments).set({ status: "inactive", updatedAt: new Date() }).where(eq(enrollments.id, id))
+    revalidatePath("/admin")
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Failed to deactivate" }
+  }
+}
+
+/**
+ * Reactivate an enrollment (status="active").
+ * Restores the enrollment to the coaching portal and all active views.
+ */
+export async function reactivateSignup(id: number): Promise<{ ok: boolean; error?: string }> {
+  await requireAdmin()
+  try {
+    await db.update(enrollments).set({ status: "active", updatedAt: new Date() }).where(eq(enrollments.id, id))
+    revalidatePath("/admin")
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Failed to reactivate" }
+  }
+}
+
+/** @deprecated Use deactivateSignup instead — production records must never be permanently deleted. */
 export async function deleteSignup(id: number): Promise<{ ok: boolean; error?: string }> {
   await requireAdmin()
   try {
