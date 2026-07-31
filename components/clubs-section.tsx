@@ -47,15 +47,23 @@ export async function ClubsSection({ heading = true }: { heading?: boolean }) {
                           srcSet={imgSrcSet}
                           sizes="(min-width: 640px) 200px, 100vw"
                           alt={club.name}
-                          className="h-full w-full object-cover"
+                          className="h-full w-full object-contain p-3"
                           loading="lazy"
                           decoding="async"
+                          onError={(e) => {
+                            const img = e.currentTarget
+                            img.style.display = "none"
+                            const fallback = img.nextElementSibling as HTMLElement | null
+                            if (fallback) fallback.style.display = "flex"
+                          }}
                         />
-                      ) : (
-                        <span className="text-center text-xl font-black text-lime px-4">
-                          {club.name}
-                        </span>
-                      )}
+                      ) : null}
+                      <span
+                        className="text-center text-xl font-black text-lime px-4 items-center justify-center"
+                        style={{ display: imgSrc ? "none" : "flex" }}
+                      >
+                        {club.name}
+                      </span>
                     </div>
                     <div className="p-4 sm:p-5">
                       <h3 className="text-xl font-black text-navy">{club.name}</h3>
