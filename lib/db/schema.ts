@@ -2,6 +2,7 @@ import {
   pgTable,
   text,
   timestamp,
+  date,
   boolean,
   integer,
   serial,
@@ -586,7 +587,8 @@ export const sessionAttendance = pgTable("session_attendance", {
   enrollmentId: integer("enrollmentId")
     .notNull()
     .references(() => enrollments.id, { onDelete: "cascade" }),
-  sessionDate: timestamp("sessionDate").notNull(),
+  // Stored as DATE in Postgres — Drizzle date() returns a "YYYY-MM-DD" string directly
+  sessionDate: date("sessionDate").notNull(),
   // 'present' | 'absent' | 'excused'
   status: text("status").notNull().default("present"),
   note: text("note"),

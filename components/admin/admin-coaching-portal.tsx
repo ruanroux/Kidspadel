@@ -13,6 +13,10 @@ import {
   RotateCcw,
   Calendar,
   UserCheck,
+  Pencil,
+  CheckCircle2,
+  XCircle,
+  MinusCircle,
 } from "lucide-react"
 import type { CoachOption, CoachingEnrollment, AttendanceRecord } from "@/app/actions/coaching-portal"
 import {
@@ -28,7 +32,6 @@ import {
 // Constants & helpers
 // ---------------------------------------------------------------------------
 
-const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const WEEKDAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
 function formatHour(h: number): string {
@@ -37,8 +40,12 @@ function formatHour(h: number): string {
   return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`
 }
 
+/** Format a Date as "YYYY-MM-DD" using local time (avoids UTC midnight rollover). */
 function toDateStr(d: Date): string {
-  return d.toISOString().split("T")[0]
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
 }
 
 /** Get the Monday of a week offset from today. */
@@ -71,26 +78,56 @@ function formatWeekLabel(offset: number): string {
   return `${fmt(mon)} – ${fmt(fri)}, ${fri.getFullYear()}`
 }
 
-function formatDateShort(d: Date): string {
-  return d.toLocaleDateString("en-ZA", { day: "numeric", month: "short" })
+function formatDateFull(d: Date): string {
+  return d.toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long" })
 }
 
 // ---------------------------------------------------------------------------
 // Attendance status badge
 // ---------------------------------------------------------------------------
 
-function StatusBadge({ status }: { status: "present" | "absent" | "excused" | null }) {
-  if (!status) return <span className="text-xs text-muted-foreground">Not marked</span>
-  const cfg = {
-    present: "bg-lime/20 text-[#3a5a00] border-lime/40",
-    absent: "bg-red-50 text-red-700 border-red-200",
-    excused: "bg-amber-50 text-amber-700 border-amber-200",
-  }[status]
-  const label = { present: "Present", absent: "Absent", excused: "Excused" }[status]
+const STATUS_CONFIG = {
+  present: {
+    label: "Present",
+    classes: "bg-lime/20 text-[#2d4800] border-lime/40",
+    dot: "bg-lime",
+    icon: CheckCircle2,
+  },
+  absent: {
+    label: "Absent",
+    classes: "bg-red-50 text-red-700 border-red-200",
+    dot: "bg-red-500",
+    icon: XCircle,
+  },
+  excused: {
+    label: "Excused",
+    classes: "bg-amber-50 text-amber-700 border-amber-200",
+    dot: "bg-amber-400",
+    icon: MinusCircle,
+  },
+} as const
+
+function StatusBadge({
+  status,
+  onClick,
+}: {
+  status: "present" | "absent" | "excused" | null
+  onClick?: () => void
+}) {
+  if (!status)
+    return (
+      <span className="text-xs text-muted-foreground italic">Not marked</span>
+    )
+  const cfg = STATUS_CONFIG[status]
   return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${cfg}`}>
-      {label}
-    </span>
+    <button
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors hover:opacity-80 ${cfg.classes} ${onClick ? "cursor-pointer" : "cursor-default"}`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
+      {cfg.label}
+      {onClick && <Pencil className="h-2.5 w-2.5 opacity-60" />}
+    </button>
   )
 }
 
@@ -99,7 +136,7 @@ function StatusBadge({ status }: { status: "present" | "absent" | "excused" | nu
 // ---------------------------------------------------------------------------
 
 type SessionSlot = {
-  weekday: number // 1=Mon…7=Sun, matching JS .getDay() convention but 1-based Mon
+  weekday: number
   hour: number
   club: string
   clubId: number | null
@@ -121,6 +158,10 @@ function SessionCard({
 }) {
   const dateStr = toDateStr(date)
   const [pending, startTransition] = useTransition()
+  // Track which enrollment is open for inline correction
+  const [correctingId, setCorrectingId] = useState<number | null>(null)
+  const [correctionStatus, setCorrectionStatus] = useState<"present" | "absent" | "excused">("present")
+  const [correctionNote, setCorrectionNote] = useState("")
 
   const getAttendance = useCallback(
     (enrollmentId: number) =>
@@ -137,72 +178,188 @@ function SessionCard({
     })
   }
 
-  const allMarked = slot.enrollments.every((e) => getAttendance(e.enrollmentId) !== null)
+  function openCorrection(enrollmentId: number, currentStatus: "present" | "absent" | "excused") {
+    setCorrectingId(enrollmentId)
+    setCorrectionStatus(currentStatus)
+    setCorrectionNote("")
+  }
+
+  function handleCorrect(att: AttendanceRecord) {
+    startTransition(async () => {
+      const res = await correctAttendance({
+        attendanceId: att.id,
+        status: correctionStatus,
+        note: correctionNote || undefined,
+      })
+      if (res.ok) {
+        onAttendanceChange({ ...att, status: correctionStatus, note: correctionNote || null })
+        setCorrectingId(null)
+      }
+    })
+  }
+
+  function handleMarkAll(status: "present" | "absent") {
+    const unmarked = slot.enrollments.filter((e) => !getAttendance(e.enrollmentId))
+    if (unmarked.length === 0) return
+    startTransition(async () => {
+      for (const enr of unmarked) {
+        const res = await markAttendance({ coachId, enrollmentId: enr.enrollmentId, sessionDate: dateStr, status })
+        if (res.ok && res.id) {
+          onAttendanceChange({ id: res.id, enrollmentId: enr.enrollmentId, sessionDate: dateStr, status, note: null })
+        }
+      }
+    })
+  }
+
+  const markedCount = slot.enrollments.filter((e) => getAttendance(e.enrollmentId) !== null).length
+  const allMarked = markedCount === slot.enrollments.length
   const presentCount = slot.enrollments.filter(
     (e) => getAttendance(e.enrollmentId)?.status === "present"
   ).length
 
   return (
-    <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+    <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
       {/* Card header */}
-      <div className="flex items-center justify-between gap-2 bg-navy px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          <Clock className="h-3.5 w-3.5 text-lime shrink-0" />
-          <span className="text-sm font-bold text-white">{formatHour(slot.hour)}</span>
-          <span className="text-xs text-white/60">·</span>
-          <Building2 className="h-3.5 w-3.5 text-white/60 shrink-0" />
-          <span className="text-sm text-white/80 truncate">{slot.club}</span>
+      <div className="flex items-center justify-between gap-3 bg-navy px-4 py-3">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <Clock className="h-3.5 w-3.5 text-lime" />
+            <span className="text-sm font-bold text-white">{formatHour(slot.hour)}</span>
+          </div>
+          <span className="text-white/30">|</span>
+          <div className="flex items-center gap-1.5">
+            <Building2 className="h-3.5 w-3.5 text-white/50" />
+            <span className="text-sm font-semibold text-white/80">{slot.club}</span>
+          </div>
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <Users className="h-3.5 w-3.5 text-white/60" />
-          <span className="text-xs text-white/70">
-            {presentCount}/{slot.enrollments.length}
-          </span>
-          {allMarked && (
-            <span className="ml-1 flex items-center gap-1 rounded-full bg-lime/20 px-2 py-0.5 text-xs font-bold text-lime">
+        <div className="flex items-center gap-3">
+          {allMarked ? (
+            <span className="flex items-center gap-1 rounded-full bg-lime px-2.5 py-0.5 text-xs font-bold text-[#1a2a00]">
               <Check className="h-3 w-3" />
-              Done
+              All marked
             </span>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <button
+                disabled={pending || allMarked}
+                onClick={() => handleMarkAll("present")}
+                className="rounded-md bg-lime/20 px-2.5 py-1 text-xs font-semibold text-lime hover:bg-lime/30 disabled:opacity-40 transition-colors"
+              >
+                Mark all present
+              </button>
+            </div>
           )}
+          <div className="flex items-center gap-1 text-white/70">
+            <Users className="h-3.5 w-3.5" />
+            <span className="text-xs font-semibold">{presentCount}/{slot.enrollments.length}</span>
+          </div>
         </div>
       </div>
 
       {/* Roster */}
-      <div className="divide-y divide-border">
+      <div className="divide-y divide-border/60">
         {slot.enrollments.map((enr) => {
           const att = getAttendance(enr.enrollmentId)
+          const isCorrectingThis = correctingId === enr.enrollmentId
+
           return (
-            <div key={enr.enrollmentId} className="flex items-center gap-3 px-4 py-2.5">
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-navy truncate">{enr.childName}</p>
-                <p className="text-xs text-muted-foreground truncate">{enr.parentName}</p>
+            <div key={enr.enrollmentId}>
+              {/* Main row */}
+              <div className="flex items-center gap-3 px-4 py-3">
+                {/* Avatar initial */}
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-navy/10 text-xs font-bold text-navy">
+                  {enr.childName.charAt(0).toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-navy">{enr.childName}</p>
+                  <p className="text-xs text-muted-foreground">{enr.parentName} · {enr.packageName}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {att ? (
+                    <StatusBadge
+                      status={att.status}
+                      onClick={() => {
+                        if (isCorrectingThis) {
+                          setCorrectingId(null)
+                        } else {
+                          openCorrection(enr.enrollmentId, att.status)
+                        }
+                      }}
+                    />
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        disabled={pending}
+                        onClick={() => handleMark(enr.enrollmentId, "present")}
+                        className="flex items-center gap-1 rounded-md border border-lime/60 bg-lime/10 px-2.5 py-1.5 text-xs font-semibold text-[#2d4800] hover:bg-lime/25 transition-colors disabled:opacity-50"
+                      >
+                        <Check className="h-3 w-3" />
+                        Present
+                      </button>
+                      <button
+                        disabled={pending}
+                        onClick={() => handleMark(enr.enrollmentId, "absent")}
+                        className="flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 transition-colors disabled:opacity-50"
+                      >
+                        <X className="h-3 w-3" />
+                        Absent
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                {att ? (
-                  <>
-                    <StatusBadge status={att.status} />
-                  </>
-                ) : (
-                  <>
+
+              {/* Inline correction panel */}
+              {isCorrectingThis && att && (
+                <div className="border-t border-lime/30 bg-lime/5 px-4 py-3">
+                  <p className="mb-2 text-xs font-semibold text-navy">
+                    Correct attendance for {enr.childName}
+                  </p>
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {(["present", "absent", "excused"] as const).map((s) => {
+                      const cfg = STATUS_CONFIG[s]
+                      return (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setCorrectionStatus(s)}
+                          className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold capitalize transition-colors ${
+                            correctionStatus === s
+                              ? `${cfg.classes} shadow-sm`
+                              : "border-border bg-background text-muted-foreground hover:bg-muted"
+                          }`}
+                        >
+                          <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
+                          {cfg.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Optional note (e.g. late arrival, injury...)"
+                    value={correctionNote}
+                    onChange={(e) => setCorrectionNote(e.target.value)}
+                    className="mb-2.5 w-full rounded-md border border-border bg-background px-3 py-2 text-xs outline-none focus:border-lime"
+                  />
+                  <div className="flex items-center gap-2">
                     <button
                       disabled={pending}
-                      onClick={() => handleMark(enr.enrollmentId, "present")}
-                      className="flex items-center gap-1 rounded-md border border-lime/50 bg-lime/10 px-2.5 py-1 text-xs font-semibold text-[#3a5a00] hover:bg-lime/20 transition-colors disabled:opacity-50"
+                      onClick={() => handleCorrect(att)}
+                      className="flex items-center gap-1.5 rounded-md bg-lime px-3 py-1.5 text-xs font-bold text-[#1a2a00] hover:bg-lime/90 disabled:opacity-50 transition-colors"
                     >
                       <Check className="h-3 w-3" />
-                      Present
+                      {pending ? "Saving…" : "Save"}
                     </button>
                     <button
-                      disabled={pending}
-                      onClick={() => handleMark(enr.enrollmentId, "absent")}
-                      className="flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700 hover:bg-red-100 transition-colors disabled:opacity-50"
+                      onClick={() => setCorrectingId(null)}
+                      className="rounded-md border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted transition-colors"
                     >
-                      <X className="h-3 w-3" />
-                      Absent
+                      Cancel
                     </button>
-                  </>
-                )}
-              </div>
+                  </div>
+                </div>
+              )}
             </div>
           )
         })}
@@ -212,7 +369,7 @@ function SessionCard({
 }
 
 // ---------------------------------------------------------------------------
-// Correction Panel — fix a previously marked attendance
+// Correction History Panel — review & fix past attendance records
 // ---------------------------------------------------------------------------
 
 function CorrectionPanel({
@@ -227,7 +384,7 @@ function CorrectionPanel({
   onHistoryChange: (updated: AttendanceRecord[]) => void
 }) {
   const [pending, startTransition] = useTransition()
-  const [editing, setEditing] = useState<number | null>(null) // attendance id
+  const [editing, setEditing] = useState<number | null>(null)
   const [newStatus, setNewStatus] = useState<"present" | "absent" | "excused">("present")
   const [newNote, setNewNote] = useState("")
   const [filterChild, setFilterChild] = useState("")
@@ -238,9 +395,12 @@ function CorrectionPanel({
   )
 
   const filtered = useMemo(() => {
-    if (!filterChild.trim()) return history
+    const sorted = [...history].sort(
+      (a, b) => new Date(b.sessionDate).getTime() - new Date(a.sessionDate).getTime()
+    )
+    if (!filterChild.trim()) return sorted
     const q = filterChild.toLowerCase()
-    return history.filter((r) => {
+    return sorted.filter((r) => {
       const enr = enrollmentMap.get(r.enrollmentId)
       return enr?.childName.toLowerCase().includes(q)
     })
@@ -279,6 +439,16 @@ function CorrectionPanel({
 
   return (
     <div>
+      <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+          <p className="text-sm font-semibold text-amber-800">Attendance corrections — last 90 days</p>
+        </div>
+        <p className="mt-1 ml-6 text-xs text-amber-700">
+          All past attendance records for this coach. Click "Correct" to fix any errors. Changes save immediately.
+        </p>
+      </div>
+
       <div className="mb-4 flex items-center gap-3">
         <input
           type="text"
@@ -287,80 +457,90 @@ function CorrectionPanel({
           onChange={(e) => setFilterChild(e.target.value)}
           className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-lime"
         />
-        <span className="text-sm text-muted-foreground">{filtered.length} records</span>
+        <span className="text-sm text-muted-foreground shrink-0">{filtered.length} records</span>
       </div>
 
       {filtered.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border py-12 text-center">
-          <AlertTriangle className="mx-auto h-8 w-8 text-muted-foreground/40" />
+        <div className="rounded-xl border border-dashed border-border py-16 text-center">
+          <AlertTriangle className="mx-auto h-8 w-8 text-muted-foreground/30" />
           <p className="mt-2 text-sm text-muted-foreground">No attendance records found.</p>
         </div>
       ) : (
         <div className="space-y-2">
-          {[...filtered].reverse().map((record) => {
+          {filtered.map((record) => {
             const enr = enrollmentMap.get(record.enrollmentId)
             const isEditing = editing === record.id
             return (
               <div
                 key={record.id}
-                className={`rounded-xl border bg-card p-4 transition-shadow ${isEditing ? "border-lime shadow-sm" : "border-border"}`}
+                className={`rounded-xl border bg-card transition-shadow ${isEditing ? "border-lime shadow-sm" : "border-border"}`}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-navy text-sm">{enr?.childName ?? `Enrollment #${record.enrollmentId}`}</span>
+                <div className="flex items-start justify-between gap-3 p-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-navy/10 text-xs font-bold text-navy">
+                        {enr?.childName.charAt(0).toUpperCase() ?? "?"}
+                      </div>
+                      <span className="font-semibold text-navy text-sm">
+                        {enr?.childName ?? `Enrollment #${record.enrollmentId}`}
+                      </span>
                       <StatusBadge status={record.status} />
                     </div>
-                    <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
-                      <span>{new Date(record.sessionDate + "T00:00:00").toLocaleDateString("en-ZA", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</span>
+                    <div className="mt-1 ml-9 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                      <span>
+                        {new Date(record.sessionDate + "T00:00:00").toLocaleDateString("en-ZA", {
+                          weekday: "short",
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                        })}
+                      </span>
                       {enr && <span>{enr.club}</span>}
-                      {enr && <span>{enr.packageName}</span>}
+                      {enr && <span className="text-muted-foreground/60">{enr.packageName}</span>}
                     </div>
                     {record.note && (
-                      <p className="mt-1 text-xs text-muted-foreground italic">{record.note}</p>
+                      <p className="mt-1 ml-9 text-xs italic text-muted-foreground">{record.note}</p>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {!isEditing && (
-                      <>
-                        <button
-                          onClick={() => startEdit(record)}
-                          className="flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-navy hover:bg-muted transition-colors"
-                        >
-                          <RotateCcw className="h-3 w-3" />
-                          Correct
-                        </button>
-                      </>
-                    )}
-                  </div>
+                  {!isEditing && (
+                    <button
+                      onClick={() => startEdit(record)}
+                      className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-navy hover:bg-muted transition-colors"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Correct
+                    </button>
+                  )}
                 </div>
 
                 {isEditing && (
-                  <div className="mt-3 rounded-lg border border-border bg-muted/30 p-3 space-y-3">
-                    <p className="text-xs font-semibold text-navy">Correct attendance for {enr?.childName}</p>
-                    <div className="flex gap-2 flex-wrap">
-                      {(["present", "absent", "excused"] as const).map((s) => (
-                        <button
-                          key={s}
-                          type="button"
-                          onClick={() => setNewStatus(s)}
-                          className={`rounded-md border px-3 py-1.5 text-xs font-semibold capitalize transition-colors ${
-                            newStatus === s
-                              ? s === "present"
-                                ? "border-lime bg-lime/20 text-[#3a5a00]"
-                                : s === "absent"
-                                ? "border-red-300 bg-red-50 text-red-700"
-                                : "border-amber-300 bg-amber-50 text-amber-700"
-                              : "border-border bg-background text-muted-foreground hover:bg-muted"
-                          }`}
-                        >
-                          {s}
-                        </button>
-                      ))}
+                  <div className="border-t border-border bg-muted/30 px-4 py-3 space-y-3">
+                    <p className="text-xs font-semibold text-navy">
+                      Correcting attendance for {enr?.childName}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {(["present", "absent", "excused"] as const).map((s) => {
+                        const cfg = STATUS_CONFIG[s]
+                        return (
+                          <button
+                            key={s}
+                            type="button"
+                            onClick={() => setNewStatus(s)}
+                            className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold capitalize transition-colors ${
+                              newStatus === s
+                                ? `${cfg.classes} shadow-sm`
+                                : "border-border bg-background text-muted-foreground hover:bg-muted"
+                            }`}
+                          >
+                            <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
+                            {cfg.label}
+                          </button>
+                        )
+                      })}
                     </div>
                     <input
                       type="text"
-                      placeholder="Optional note (e.g. late arrival, injury)"
+                      placeholder="Optional note (e.g. late arrival, injury...)"
                       value={newNote}
                       onChange={(e) => setNewNote(e.target.value)}
                       className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-lime"
@@ -369,10 +549,10 @@ function CorrectionPanel({
                       <button
                         disabled={pending}
                         onClick={() => handleSave(record.id)}
-                        className="flex items-center gap-1.5 rounded-md bg-lime px-3 py-1.5 text-xs font-bold text-lime-foreground hover:bg-lime/90 disabled:opacity-50 transition-colors"
+                        className="flex items-center gap-1.5 rounded-md bg-lime px-3 py-1.5 text-xs font-bold text-[#1a2a00] hover:bg-lime/90 disabled:opacity-50 transition-colors"
                       >
                         <Check className="h-3 w-3" />
-                        {pending ? "Saving..." : "Save correction"}
+                        {pending ? "Saving…" : "Save correction"}
                       </button>
                       <button
                         disabled={pending}
@@ -384,7 +564,7 @@ function CorrectionPanel({
                       <button
                         disabled={pending}
                         onClick={() => handleDelete(record.id)}
-                        className="ml-auto flex items-center gap-1 rounded-md border border-red-200 px-2.5 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 transition-colors"
+                        className="ml-auto flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100 transition-colors"
                       >
                         <X className="h-3 w-3" />
                         Remove record
@@ -429,12 +609,14 @@ export function AdminCoachingPortal({
   const [loading, startLoading] = useTransition()
 
   function handleCoachChange(coachId: number) {
+    if (coachId === selectedCoachId) return
     setSelectedCoachId(coachId)
     setFilterClubId(null)
+    setWeekOffset(0)
     startLoading(async () => {
       const [enrs, att, hist] = await Promise.all([
         getCoachEnrollments(coachId),
-        getCoachAttendance(coachId, weekOffset),
+        getCoachAttendance(coachId, 0),
         getCoachAttendanceHistory(coachId),
       ])
       setEnrollments(enrs)
@@ -454,139 +636,100 @@ export function AdminCoachingPortal({
     }
   }
 
+  function handleJumpToThisWeek() {
+    setWeekOffset(0)
+    if (selectedCoachId) {
+      startLoading(async () => {
+        const att = await getCoachAttendance(selectedCoachId, 0)
+        setAttendance(att)
+      })
+    }
+  }
+
   function handleAttendanceChange(record: AttendanceRecord) {
     setAttendance((prev) => {
       const idx = prev.findIndex(
         (a) => a.enrollmentId === record.enrollmentId && a.sessionDate === record.sessionDate
       )
-      if (idx >= 0) {
-        const updated = [...prev]
-        updated[idx] = record
-        return updated
-      }
-      return [...prev, record]
+      return idx >= 0
+        ? prev.map((a, i) => (i === idx ? record : a))
+        : [...prev, record]
     })
-    // Also update history
     setHistory((prev) => {
       const idx = prev.findIndex((a) => a.id === record.id)
-      if (idx >= 0) {
-        const updated = [...prev]
-        updated[idx] = record
-        return updated
-      }
-      return [...prev, record]
+      return idx >= 0
+        ? prev.map((a, i) => (i === idx ? record : a))
+        : [...prev, record]
     })
   }
 
   // Build session slots for the current week
-  const weekDays = getWeekDays(weekOffset) // Mon-Fri
+  const weekDays = getWeekDays(weekOffset)
 
-  // Convert JS .getDay() (0=Sun,1=Mon…) to our slot weekday (which uses 0=Sun also)
-  // Enrollments store slotWeekday as 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat, 7=Sun (some use 0 too)
-  // weekDays[0]=Mon → .getDay()=1, weekDays[4]=Fri → .getDay()=5
-
-  type DaySlots = Map<string, SessionSlot> // key = `${clubId}-${hour}`
+  type DaySlots = Map<string, SessionSlot>
 
   const daySlotMap = useMemo<Map<string, DaySlots>>(() => {
     const result = new Map<string, DaySlots>()
     for (const day of weekDays) {
       const dateStr = toDateStr(day)
-      const weekdayNum = day.getDay() // 0=Sun, 1=Mon...
+      const weekdayNum = day.getDay()
       const daySlots: DaySlots = new Map()
 
       for (const enr of enrollments) {
-        // Check slot 1
-        if (enr.slotWeekday === weekdayNum && enr.slotHour !== null) {
-          if (!filterClubId || enr.clubId === filterClubId) {
+        if (!filterClubId || enr.clubId === filterClubId) {
+          if (enr.slotWeekday === weekdayNum && enr.slotHour !== null) {
             const key = `${enr.clubId ?? "null"}-${enr.slotHour}`
             if (!daySlots.has(key)) {
-              daySlots.set(key, {
-                weekday: weekdayNum,
-                hour: enr.slotHour,
-                club: enr.club,
-                clubId: enr.clubId,
-                enrollments: [],
-              })
+              daySlots.set(key, { weekday: weekdayNum, hour: enr.slotHour, club: enr.club, clubId: enr.clubId, enrollments: [] })
             }
             daySlots.get(key)!.enrollments.push(enr)
           }
-        }
-        // Check slot 2 (advanced)
-        if (enr.slotWeekday2 === weekdayNum && enr.slotHour2 !== null) {
-          if (!filterClubId || enr.clubId === filterClubId) {
+          if (enr.slotWeekday2 === weekdayNum && enr.slotHour2 !== null) {
             const key = `${enr.clubId ?? "null"}-${enr.slotHour2}-s2`
             if (!daySlots.has(key)) {
-              daySlots.set(key, {
-                weekday: weekdayNum,
-                hour: enr.slotHour2,
-                club: enr.club,
-                clubId: enr.clubId,
-                enrollments: [],
-              })
+              daySlots.set(key, { weekday: weekdayNum, hour: enr.slotHour2, club: enr.club, clubId: enr.clubId, enrollments: [] })
             }
             daySlots.get(key)!.enrollments.push(enr)
           }
         }
       }
-
-      if (daySlots.size > 0) {
-        result.set(dateStr, daySlots)
-      }
+      if (daySlots.size > 0) result.set(dateStr, daySlots)
     }
     return result
   }, [enrollments, weekDays, filterClubId])
 
-  // Unique clubs for this coach
   const coachClubs = useMemo(() => {
     const seen = new Map<number, string>()
     for (const enr of enrollments) {
-      if (enr.clubId != null && !seen.has(enr.clubId)) {
-        seen.set(enr.clubId, enr.club)
-      }
+      if (enr.clubId != null && !seen.has(enr.clubId)) seen.set(enr.clubId, enr.club)
     }
-    return Array.from(seen.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+    return Array.from(seen.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name))
   }, [enrollments])
 
   const selectedCoach = initialCoaches.find((c) => c.id === selectedCoachId)
   const totalSessions = [...daySlotMap.values()].reduce((s, m) => s + m.size, 0)
-  const markedCount = attendance.length
+  const markedThisWeek = attendance.length
 
   return (
-    <div>
-      {/* Header */}
-      <div className="mb-6">
-        <h2 className="text-xl font-bold text-navy">Coaching Portal</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          View coach schedules, mark session attendance, and correct errors.
-        </p>
-      </div>
-
-      {/* Coach selector + view toggle */}
-      <div className="mb-6 flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <label className="text-sm font-semibold text-navy">Coach:</label>
-          <div className="flex flex-wrap gap-2">
-            {initialCoaches.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => handleCoachChange(c.id)}
-                className={`rounded-full border px-4 py-1.5 text-sm font-semibold transition-colors ${
-                  selectedCoachId === c.id
-                    ? "border-navy bg-navy text-white"
-                    : "border-border bg-background text-muted-foreground hover:border-navy hover:text-navy"
-                }`}
-              >
-                {c.name}
-              </button>
-            ))}
-          </div>
+    <div className="space-y-6">
+      {/* Page header */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-navy">Coaching Portal</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            View schedules, mark attendance, and correct errors for each coach.
+          </p>
         </div>
-
-        <div className="ml-auto flex items-center gap-2 rounded-lg border border-border bg-muted/30 p-1">
+        {/* View toggle */}
+        <div className="flex items-center gap-1 rounded-lg border border-border bg-muted/40 p-1">
           <button
             onClick={() => setView("calendar")}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
-              view === "calendar" ? "bg-white text-navy shadow-sm" : "text-muted-foreground hover:text-navy"
+            className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-semibold transition-colors ${
+              view === "calendar"
+                ? "bg-white text-navy shadow-sm"
+                : "text-muted-foreground hover:text-navy"
             }`}
           >
             <Calendar className="h-4 w-4" />
@@ -594,8 +737,10 @@ export function AdminCoachingPortal({
           </button>
           <button
             onClick={() => setView("corrections")}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
-              view === "corrections" ? "bg-white text-navy shadow-sm" : "text-muted-foreground hover:text-navy"
+            className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-semibold transition-colors ${
+              view === "corrections"
+                ? "bg-white text-navy shadow-sm"
+                : "text-muted-foreground hover:text-navy"
             }`}
           >
             <RotateCcw className="h-4 w-4" />
@@ -604,95 +749,146 @@ export function AdminCoachingPortal({
         </div>
       </div>
 
+      {/* Coach selector cards */}
+      <div>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Select coach
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {initialCoaches.map((coach) => {
+            const isSelected = selectedCoachId === coach.id
+            const coachEnrCount = isSelected ? enrollments.length : coach.studentCount
+            return (
+              <button
+                key={coach.id}
+                onClick={() => handleCoachChange(coach.id)}
+                disabled={loading}
+                className={`group relative overflow-hidden rounded-xl border-2 p-4 text-left transition-all disabled:opacity-60 ${
+                  isSelected
+                    ? "border-navy bg-navy text-white shadow-md"
+                    : "border-border bg-card hover:border-navy/50 hover:shadow-sm"
+                }`}
+              >
+                {/* Avatar + name */}
+                <div className="flex items-center gap-3 mb-3">
+                  <div
+                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
+                      isSelected ? "bg-lime text-[#1a2a00]" : "bg-navy/10 text-navy"
+                    }`}
+                  >
+                    {coach.name
+                      .split(" ")
+                      .slice(0, 2)
+                      .map((n) => n[0])
+                      .join("")
+                      .toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
+                    <p className={`font-bold text-sm truncate ${isSelected ? "text-white" : "text-navy"}`}>
+                      {coach.name}
+                    </p>
+                    {isSelected && (
+                      <p className="text-xs text-lime font-semibold">Active</p>
+                    )}
+                  </div>
+                </div>
+                {/* Stats */}
+                <div className="flex items-center gap-4">
+                  <div>
+                    <p className={`text-xl font-extrabold ${isSelected ? "text-white" : "text-navy"}`}>
+                      {coachEnrCount}
+                    </p>
+                    <p className={`text-xs ${isSelected ? "text-white/60" : "text-muted-foreground"}`}>
+                      Students
+                    </p>
+                  </div>
+                  <div>
+                    <p className={`text-xl font-extrabold ${isSelected ? "text-lime" : "text-navy"}`}>
+                      {coach.clubCount}
+                    </p>
+                    <p className={`text-xs ${isSelected ? "text-white/60" : "text-muted-foreground"}`}>
+                      Clubs
+                    </p>
+                  </div>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
       {!selectedCoachId ? (
-        <div className="rounded-xl border border-dashed border-border py-16 text-center">
-          <UserCheck className="mx-auto h-10 w-10 text-muted-foreground/40" />
-          <p className="mt-3 text-muted-foreground">Select a coach to view their schedule.</p>
+        <div className="rounded-xl border border-dashed border-border py-20 text-center">
+          <UserCheck className="mx-auto h-10 w-10 text-muted-foreground/30" />
+          <p className="mt-3 text-muted-foreground">Select a coach above to view their schedule.</p>
         </div>
       ) : view === "corrections" ? (
-        <div>
-          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
-              <p className="text-sm font-semibold text-amber-800">
-                Attendance corrections for {selectedCoach?.name} — last 90 days
-              </p>
-            </div>
-            <p className="mt-1 text-xs text-amber-700 ml-6">
-              Use this panel to fix sessions that were marked incorrectly. Changes are saved immediately.
-            </p>
-          </div>
-          <CorrectionPanel
-            coachId={selectedCoachId}
-            enrollments={enrollments}
-            history={history}
-            onHistoryChange={setHistory}
-          />
-        </div>
+        <CorrectionPanel
+          coachId={selectedCoachId}
+          enrollments={enrollments}
+          history={history}
+          onHistoryChange={setHistory}
+        />
       ) : (
         <>
-          {/* Stats bar */}
-          <div className="mb-5 grid grid-cols-3 gap-3">
-            <div className="rounded-xl border border-border bg-card px-4 py-3 text-center">
-              <p className="text-2xl font-extrabold text-navy">{enrollments.length}</p>
-              <p className="text-xs text-muted-foreground">Active students</p>
+          {/* Stats row */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-xl border border-border bg-card px-4 py-4 text-center">
+              <p className="text-3xl font-extrabold text-navy">{enrollments.length}</p>
+              <p className="mt-0.5 text-xs font-medium text-muted-foreground">Active students</p>
             </div>
-            <div className="rounded-xl border border-border bg-card px-4 py-3 text-center">
-              <p className="text-2xl font-extrabold text-navy">{totalSessions}</p>
-              <p className="text-xs text-muted-foreground">Sessions this week</p>
+            <div className="rounded-xl border border-border bg-card px-4 py-4 text-center">
+              <p className="text-3xl font-extrabold text-navy">{totalSessions}</p>
+              <p className="mt-0.5 text-xs font-medium text-muted-foreground">Sessions this week</p>
             </div>
-            <div className="rounded-xl border border-border bg-card px-4 py-3 text-center">
-              <p className="text-2xl font-extrabold text-lime">{markedCount}</p>
-              <p className="text-xs text-muted-foreground">Marked this week</p>
+            <div className="rounded-xl border border-border bg-card px-4 py-4 text-center">
+              <p className={`text-3xl font-extrabold ${markedThisWeek > 0 ? "text-lime" : "text-muted-foreground/40"}`}>
+                {markedThisWeek}
+              </p>
+              <p className="mt-0.5 text-xs font-medium text-muted-foreground">Marked this week</p>
             </div>
           </div>
 
-          {/* Week nav + club filter */}
-          <div className="mb-5 flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
+          {/* Week navigation + club filter */}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Week nav */}
+            <div className="flex items-center gap-1 rounded-lg border border-border bg-card px-2 py-1.5">
               <button
                 onClick={() => handleWeekChange(-1)}
-                className="rounded-md p-1 hover:bg-muted transition-colors"
+                disabled={loading}
+                className="rounded-md p-1.5 hover:bg-muted transition-colors disabled:opacity-50"
               >
                 <ChevronLeft className="h-4 w-4 text-navy" />
               </button>
-              <span className="text-sm font-semibold text-navy min-w-[200px] text-center">
+              <span className="min-w-[190px] text-center text-sm font-semibold text-navy">
                 {formatWeekLabel(weekOffset)}
               </span>
               <button
                 onClick={() => handleWeekChange(1)}
-                className="rounded-md p-1 hover:bg-muted transition-colors"
+                disabled={loading}
+                className="rounded-md p-1.5 hover:bg-muted transition-colors disabled:opacity-50"
               >
                 <ChevronRight className="h-4 w-4 text-navy" />
               </button>
             </div>
             {weekOffset !== 0 && (
               <button
-                onClick={() => {
-                  setWeekOffset(0)
-                  if (selectedCoachId) {
-                    startLoading(async () => {
-                      const att = await getCoachAttendance(selectedCoachId, 0)
-                      setAttendance(att)
-                    })
-                  }
-                }}
-                className="rounded-md border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted transition-colors"
+                onClick={handleJumpToThisWeek}
+                className="rounded-md border border-border bg-background px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted transition-colors"
               >
                 This week
               </button>
             )}
-
             {/* Club filter */}
             {coachClubs.length > 1 && (
-              <div className="flex flex-wrap items-center gap-2 ml-auto">
-                <span className="text-xs font-semibold text-muted-foreground">Filter:</span>
+              <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground mr-1">Filter:</span>
                 <button
                   onClick={() => setFilterClubId(null)}
-                  className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
                     filterClubId === null
                       ? "border-navy bg-navy text-white"
-                      : "border-border text-muted-foreground hover:border-navy hover:text-navy"
+                      : "border-border text-muted-foreground hover:border-navy/60 hover:text-navy"
                   }`}
                 >
                   All clubs
@@ -701,10 +897,10 @@ export function AdminCoachingPortal({
                   <button
                     key={c.id}
                     onClick={() => setFilterClubId(c.id)}
-                    className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                    className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
                       filterClubId === c.id
                         ? "border-navy bg-navy text-white"
-                        : "border-border text-muted-foreground hover:border-navy hover:text-navy"
+                        : "border-border text-muted-foreground hover:border-navy/60 hover:text-navy"
                     }`}
                   >
                     {c.name}
@@ -715,13 +911,13 @@ export function AdminCoachingPortal({
           </div>
 
           {loading && (
-            <div className="mb-4 rounded-lg bg-muted/50 px-4 py-2 text-sm text-muted-foreground">
-              Loading...
+            <div className="rounded-lg border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+              Loading schedule…
             </div>
           )}
 
-          {/* Week calendar grid */}
-          <div className="space-y-6">
+          {/* Week calendar */}
+          <div className="space-y-8">
             {weekDays.map((day) => {
               const dateStr = toDateStr(day)
               const daySlots = daySlotMap.get(dateStr)
@@ -733,26 +929,46 @@ export function AdminCoachingPortal({
               return (
                 <div key={dateStr}>
                   {/* Day header */}
-                  <div className={`mb-3 flex items-center gap-3 pb-2 border-b ${isToday ? "border-lime" : "border-border"}`}>
-                    <div className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-extrabold ${isToday ? "bg-lime text-[#1a2a00]" : "bg-muted text-navy"}`}>
+                  <div
+                    className={`mb-4 flex items-center gap-3 rounded-lg px-4 py-2.5 ${
+                      isToday ? "bg-lime/10 border border-lime/30" : "bg-muted/40 border border-border"
+                    }`}
+                  >
+                    <div
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-extrabold ${
+                        isToday ? "bg-lime text-[#1a2a00]" : "bg-navy/10 text-navy"
+                      }`}
+                    >
                       {day.getDate()}
                     </div>
                     <div>
-                      <p className={`text-sm font-bold ${isToday ? "text-lime" : "text-navy"}`}>
+                      <p className={`text-sm font-bold ${isToday ? "text-navy" : "text-navy"}`}>
                         {WEEKDAY_FULL[day.getDay()]}
-                        {isToday && <span className="ml-2 text-xs font-semibold text-lime/80">(Today)</span>}
+                        {isToday && (
+                          <span className="ml-2 rounded-full bg-lime/30 px-2 py-0.5 text-xs font-semibold text-[#2d4800]">
+                            Today
+                          </span>
+                        )}
                       </p>
-                      <p className="text-xs text-muted-foreground">{formatDateShort(day)}</p>
+                      <p className="text-xs text-muted-foreground">{formatDateFull(day)}</p>
                     </div>
-                    <span className="ml-auto text-xs text-muted-foreground">
-                      {slots.length === 0 ? "No sessions" : `${slots.length} session${slots.length > 1 ? "s" : ""}`}
-                    </span>
+                    <div className="ml-auto">
+                      {slots.length === 0 ? (
+                        <span className="text-xs text-muted-foreground">No sessions</span>
+                      ) : (
+                        <span className="rounded-full bg-navy/10 px-2.5 py-1 text-xs font-semibold text-navy">
+                          {slots.length} session{slots.length > 1 ? "s" : ""}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {slots.length === 0 ? (
-                    <p className="pl-12 text-xs text-muted-foreground italic">No coaching sessions scheduled.</p>
+                    <p className="pl-4 text-xs italic text-muted-foreground">
+                      No coaching sessions scheduled for this day.
+                    </p>
                   ) : (
-                    <div className="pl-12 space-y-3">
+                    <div className="space-y-3 pl-0 lg:pl-4">
                       {slots.map((slot, idx) => (
                         <SessionCard
                           key={`${dateStr}-${idx}`}

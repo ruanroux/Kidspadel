@@ -14,6 +14,8 @@ export type CoachOption = {
   id: number
   name: string
   clubIds: number[]
+  clubCount: number
+  studentCount: number
 }
 
 export type CoachingEnrollment = {
@@ -53,10 +55,14 @@ export type CoachingPortalData = {
 
 function toDateStr(d: Date | string | null | undefined): string {
   if (!d) return ""
-  // Drizzle may return a string (ISO) or a Date object for timestamp columns
-  const dt = typeof d === "string" ? new Date(d) : d
-  if (isNaN(dt.getTime())) return String(d).split("T")[0] ?? ""
-  return dt.toISOString().split("T")[0]
+  // Drizzle's date() type returns a plain "YYYY-MM-DD" string — pass it straight through.
+  // If it's a Date object (legacy or timestamp column), convert via ISO.
+  if (typeof d === "string") {
+    // Could be "YYYY-MM-DD" or a full ISO string — keep only the date part
+    return d.split("T")[0]
+  }
+  if (isNaN(d.getTime())) return ""
+  return d.toISOString().split("T")[0]
 }
 
 function weekBounds(weekOffset: number): { start: Date; end: Date } {
@@ -77,7 +83,7 @@ function weekBounds(weekOffset: number): { start: Date; end: Date } {
 // Actions
 // ---------------------------------------------------------------------------
 
-/** Load all coaches (admin use). */
+/** Load all coaches with club and student counts (admin use). */
 export async function getCoachOptions(): Promise<CoachOption[]> {
   await requireAdmin()
   const rows = await db
@@ -85,13 +91,36 @@ export async function getCoachOptions(): Promise<CoachOption[]> {
     .from(coaches)
     .orderBy(asc(coaches.sortOrder), asc(coaches.id))
   if (rows.length === 0) return []
+
+  // Club assignments per coach
   const ccRows = await db.select().from(coachClubs)
   const clubMap = new Map<number, number[]>()
   for (const cc of ccRows) {
     if (!clubMap.has(cc.coachId)) clubMap.set(cc.coachId, [])
     clubMap.get(cc.coachId)!.push(cc.clubId)
   }
-  return rows.map((r) => ({ id: r.id, name: r.name, clubIds: clubMap.get(r.id) ?? [] }))
+
+  // Student count per coach (active/pending enrollments)
+  const studentRows = await db
+    .select({ coachId: enrollments.coachId, id: enrollments.id })
+    .from(enrollments)
+    .where(inArray(enrollments.status, ["active", "pending"]))
+  const studentMap = new Map<number, number>()
+  for (const s of studentRows) {
+    if (s.coachId == null) continue
+    studentMap.set(s.coachId, (studentMap.get(s.coachId) ?? 0) + 1)
+  }
+
+  return rows.map((r) => {
+    const ids = clubMap.get(r.id) ?? []
+    return {
+      id: r.id,
+      name: r.name,
+      clubIds: ids,
+      clubCount: ids.length,
+      studentCount: studentMap.get(r.id) ?? 0,
+    }
+  })
 }
 
 /**
@@ -145,14 +174,17 @@ export async function getCoachAttendance(
 ): Promise<AttendanceRecord[]> {
   await requireAdmin()
   const { start, end } = weekBounds(weekOffset)
+  // date column — compare using "YYYY-MM-DD" strings
+  const startStr = toDateStr(start)
+  const endStr = toDateStr(end)
   const rows = await db
     .select()
     .from(sessionAttendance)
     .where(
       and(
         eq(sessionAttendance.coachId, coachId),
-        gte(sessionAttendance.sessionDate, start),
-        lte(sessionAttendance.sessionDate, end)
+        gte(sessionAttendance.sessionDate, startStr),
+        lte(sessionAttendance.sessionDate, endStr)
       )
     )
   return rows.map((r) => ({
@@ -171,13 +203,14 @@ export async function getCoachAttendanceHistory(
   await requireAdmin()
   const ninetyDaysAgo = new Date()
   ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
+  const ninetyDaysAgoStr = toDateStr(ninetyDaysAgo)
   const rows = await db
     .select()
     .from(sessionAttendance)
     .where(
       and(
         eq(sessionAttendance.coachId, coachId),
-        gte(sessionAttendance.sessionDate, ninetyDaysAgo)
+        gte(sessionAttendance.sessionDate, ninetyDaysAgoStr)
       )
     )
     .orderBy(asc(sessionAttendance.sessionDate))
@@ -200,7 +233,8 @@ export async function markAttendance(input: {
 }): Promise<{ ok: boolean; id?: number; error?: string }> {
   await requireAdmin()
   try {
-    const dateObj = new Date(input.sessionDate + "T00:00:00.000Z")
+    // sessionDate column is DATE type — pass "YYYY-MM-DD" string directly
+    const sessionDateStr = input.sessionDate // already "YYYY-MM-DD"
     // Check for existing record
     const existing = await db
       .select({ id: sessionAttendance.id })
@@ -209,7 +243,7 @@ export async function markAttendance(input: {
         and(
           eq(sessionAttendance.coachId, input.coachId),
           eq(sessionAttendance.enrollmentId, input.enrollmentId),
-          eq(sessionAttendance.sessionDate, dateObj)
+          eq(sessionAttendance.sessionDate, sessionDateStr)
         )
       )
       .limit(1)
@@ -232,7 +266,7 @@ export async function markAttendance(input: {
       .values({
         coachId: input.coachId,
         enrollmentId: input.enrollmentId,
-        sessionDate: dateObj,
+        sessionDate: sessionDateStr,
         status: input.status,
         note: input.note ?? null,
       })
