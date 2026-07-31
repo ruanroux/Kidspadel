@@ -2,8 +2,8 @@
 
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
-import { enrollments, user } from "@/lib/db/schema"
-import { and, desc, eq } from "drizzle-orm"
+import { enrollments, user, coachClubs, coaches } from "@/lib/db/schema"
+import { and, asc, desc, eq } from "drizzle-orm"
 import { headers } from "next/headers"
 import { revalidatePath } from "next/cache"
 import { put } from "@vercel/blob"
@@ -73,12 +73,43 @@ export type EnrollmentInput = {
   discountPercent?: number
 }
 
+/**
+ * Look up the first coach assigned to a club (by coachId ascending).
+ * Used to auto-assign a coach when one is not explicitly selected during enrollment.
+ */
+async function lookupClubCoach(clubId: number | null | undefined): Promise<{ coachId: number; coachName: string } | null> {
+  if (!clubId) return null
+  try {
+    const rows = await db
+      .select({ coachId: coachClubs.coachId, coachName: coaches.name })
+      .from(coachClubs)
+      .innerJoin(coaches, eq(coaches.id, coachClubs.coachId))
+      .where(eq(coachClubs.clubId, clubId))
+      .orderBy(asc(coachClubs.coachId))
+      .limit(1)
+    return rows[0] ?? null
+  } catch {
+    return null
+  }
+}
+
 export async function createEnrollment(input: EnrollmentInput) {
   const userId = await getUserId()
   const referenceNumber = generateReference()
   const signedAt = new Date()
 
   const isOnceOff = input.paymentType === "once-off"
+
+  // Auto-assign a coach from the club's assigned coaches if one wasn't selected
+  let resolvedCoachId = input.coachId ?? null
+  let resolvedCoachName = input.coachName ?? null
+  if (!resolvedCoachId && input.clubId) {
+    const autoCoach = await lookupClubCoach(input.clubId)
+    if (autoCoach) {
+      resolvedCoachId = autoCoach.coachId
+      resolvedCoachName = autoCoach.coachName
+    }
+  }
 
   const inserted = await db
     .insert(enrollments)
@@ -120,9 +151,9 @@ export async function createEnrollment(input: EnrollmentInput) {
       status: "pending",
       accountStatus: "active",
       onboardingComplete: false,
-      // Coach
-      coachId: input.coachId ?? undefined,
-      coachName: input.coachName ?? undefined,
+      // Coach — either explicitly selected or auto-resolved from club assignments
+      coachId: resolvedCoachId ?? undefined,
+      coachName: resolvedCoachName ?? undefined,
     })
     .returning({ id: enrollments.id })
 

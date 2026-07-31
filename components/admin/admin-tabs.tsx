@@ -7,6 +7,8 @@ import { AdminPackageManager } from "@/components/admin/admin-package-manager"
 import { AdminSignupsManager } from "@/components/admin/admin-signups-manager"
 import { AdminContactManager } from "@/components/admin/admin-contact-manager"
 import { AdminCoachesManager } from "@/components/admin/admin-coaches-manager"
+import { AdminCoachingPortal } from "@/components/admin/admin-coaching-portal"
+import type { CoachOption, CoachingEnrollment, AttendanceRecord } from "@/app/actions/coaching-portal"
 import { AdminReferralsManager } from "@/components/admin/admin-referrals-manager"
 import { AdminPaymentsManager } from "@/components/admin/admin-payments-manager"
 import type { PublicPackage as PackageDTO } from "@/app/actions/packages"
@@ -22,7 +24,7 @@ import type { PublicMoment } from "@/app/actions/moments"
 import { AdminSiteImagesManager } from "@/components/admin/admin-site-images-manager"
 import type { SiteImageRow } from "@/app/actions/site-images"
 
-type Tab = "clubs" | "schools" | "packages" | "signups" | "contact" | "coaches" | "referrals" | "payments" | "impersonate" | "moments" | "site-images"
+type Tab = "clubs" | "schools" | "packages" | "signups" | "contact" | "coaches" | "coaching-portal" | "referrals" | "payments" | "impersonate" | "moments" | "site-images"
 
 export function AdminTabs({
   clubs,
@@ -31,6 +33,10 @@ export function AdminTabs({
   signups,
   contacts,
   coaches,
+  coachOptions,
+  initialCoachEnrollments,
+  initialCoachAttendance,
+  initialCoachHistory,
   referrals,
   vouchers,
   campaigns,
@@ -47,6 +53,10 @@ export function AdminTabs({
   signups: AdminSignup[]
   contacts: ContactPerson[]
   coaches: CoachRow[]
+  coachOptions: CoachOption[]
+  initialCoachEnrollments: CoachingEnrollment[]
+  initialCoachAttendance: AttendanceRecord[]
+  initialCoachHistory: AttendanceRecord[]
   referrals: AdminReferralRow[]
   vouchers: AdminVoucherRow[]
   campaigns: VoucherCampaign[]
@@ -65,6 +75,7 @@ export function AdminTabs({
     { id: "packages", label: "Packages" },
     { id: "signups", label: "Sign-ups" },
     { id: "coaches", label: "Coaches" },
+    { id: "coaching-portal", label: "Coaching Portal" },
     { id: "payments", label: "Payments" },
     { id: "referrals", label: "Referrals & Vouchers" },
     { id: "contact", label: "Contact Details" },
@@ -97,6 +108,14 @@ export function AdminTabs({
         {tab === "packages" && <AdminPackageManager initialPackages={packages} allClubs={clubs} allSchools={schools} />}
         {tab === "signups" && <AdminSignupsManager initialSignups={signups} allCoaches={coaches} allPackages={packages} allClubs={clubs} />}
         {tab === "coaches" && <AdminCoachesManager initialCoaches={coaches} allClubs={clubs} />}
+        {tab === "coaching-portal" && (
+          <AdminCoachingPortal
+            initialCoaches={coachOptions}
+            initialEnrollments={initialCoachEnrollments}
+            initialAttendance={initialCoachAttendance}
+            initialHistory={initialCoachHistory}
+          />
+        )}
         {tab === "payments" && (
           <AdminPaymentsManager
             initialPayments={allPayments}

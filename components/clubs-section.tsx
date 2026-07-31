@@ -24,8 +24,14 @@ export async function ClubsSection({ heading = true }: { heading?: boolean }) {
           <div className="space-y-4">
             {clubs.map((club) => {
               const features = Array.isArray(club.features) ? (club.features as string[]) : []
-              const imgSrc = blobImage(club.imageUrl, 640) ?? blobUrl(club.imageUrl) ?? club.image
-              const imgSrcSet = blobSrcSet(club.imageUrl)
+              // Full https:// URLs (public blob or external) are used directly.
+              // Local public paths (starting with /) are used directly — no proxy.
+              // Only blob storage pathnames (no leading /) go through blobImage/blobUrl.
+              const isDirectUrl = club.imageUrl?.startsWith("https://") || club.imageUrl?.startsWith("http://") || club.imageUrl?.startsWith("/")
+              const imgSrc = isDirectUrl
+                ? club.imageUrl
+                : (blobImage(club.imageUrl, 640) ?? blobUrl(club.imageUrl) ?? club.image)
+              const imgSrcSet = isDirectUrl ? undefined : blobSrcSet(club.imageUrl)
               return (
                 <article
                   key={club.id}

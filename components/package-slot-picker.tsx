@@ -13,6 +13,7 @@ export function PackageSlotPicker({
   ageGroup,
   clubId,
   selected,
+  disabledWeekday,
   onSelect,
 }: {
   packageId: number
@@ -21,6 +22,8 @@ export function PackageSlotPicker({
   /** The club the customer selected — slots are filtered to this club. */
   clubId?: number
   selected: SelectedSlot | null
+  /** Weekday number (0–6) to disable — used for the second session to prevent same-day booking. */
+  disabledWeekday?: number
   onSelect: (slot: SelectedSlot) => void
 }) {
   const [slots, setSlots] = useState<CustomSlotWithAvailability[] | null>(null)
@@ -74,15 +77,17 @@ export function PackageSlotPicker({
                 const hourNum = Number(s.hour)
                 const isSelected = selected?.weekday === s.weekday && selected?.hour === hourNum
                 const isFull = s.remaining <= 0
+                const isSameDay = disabledWeekday !== undefined && s.weekday === disabledWeekday
+                const isDisabled = isFull || isSameDay
 
                 return (
                   <button
                     key={`${s.weekday}-${s.hour}`}
                     type="button"
-                    disabled={isFull}
-                    onClick={() => !isFull && onSelect({ weekday: s.weekday, hour: hourNum })}
+                    disabled={isDisabled}
+                    onClick={() => !isDisabled && onSelect({ weekday: s.weekday, hour: hourNum })}
                     className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
-                      isFull
+                      isDisabled
                         ? "cursor-not-allowed border-border bg-muted/40 opacity-50"
                         : isSelected
                           ? "border-lime bg-lime/15 text-navy"
@@ -92,6 +97,8 @@ export function PackageSlotPicker({
                     <span className="font-semibold">{formatHour(hourNum)} – {formatEndHour(hourNum)}</span>
                     {isFull ? (
                       <span className="ml-2 text-xs text-muted-foreground">Full</span>
+                    ) : isSameDay ? (
+                      <span className="ml-2 text-xs text-muted-foreground">Same day</span>
                     ) : (
                       <span className="ml-2 text-xs text-muted-foreground">
                         {s.remaining} / {s.capacity} spot{s.capacity !== 1 ? "s" : ""} left

@@ -25,6 +25,7 @@ const MEMBERSHIP_STATUS_STYLES: Record<string, string> = {
   confirmed: "bg-lime/20 text-navy",
   cancelled: "bg-muted text-muted-foreground",
   "on-hold": "bg-amber-100 text-amber-700",
+  inactive: "bg-muted text-muted-foreground",
 }
 
 const PAYMENT_STATUS_STYLES: Record<string, string> = {
@@ -161,16 +162,23 @@ export default async function DashboardPage() {
                 const enrollmentPayments = allPayments.filter((p) => p.enrollmentId === e.id)
                 const isMonthly = e.paymentType === "monthly"
 
+                const isInactive = e.status === "inactive"
+
                 return (
-                  <article key={e.id} className="rounded-card border border-border bg-card shadow-sm">
+                  <article
+                    key={e.id}
+                    className={`rounded-card border bg-card shadow-sm ${isInactive ? "border-dashed border-muted-foreground/30 opacity-80" : "border-border"}`}
+                  >
                     {/* Card header */}
                     <div className="flex items-start justify-between gap-3 border-b border-border p-4 sm:p-5">
                       <div>
-                        <h3 className="text-lg font-bold text-navy">{e.childName}</h3>
+                        <h3 className={`text-lg font-bold ${isInactive ? "text-muted-foreground" : "text-navy"}`}>{e.childName}</h3>
                         <p className="text-sm text-muted-foreground">{e.packageName}</p>
-                        <p className="mt-0.5 text-xs text-muted-foreground capitalize">
-                          {isMonthly ? "Monthly subscription" : "Once-off"}
-                        </p>
+                        {!isInactive && (
+                          <p className="mt-0.5 text-xs text-muted-foreground capitalize">
+                            {isMonthly ? "Monthly subscription" : "Once-off"}
+                          </p>
+                        )}
                       </div>
                       <span
                         className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold capitalize ${
@@ -182,18 +190,28 @@ export default async function DashboardPage() {
                     </div>
 
                     <div className="p-4 sm:p-5 space-y-4">
+                      {/* Inactive notice */}
+                      {isInactive && (
+                        <div className="flex items-center gap-2 rounded-md bg-muted/60 border border-border px-3 py-2 text-xs text-muted-foreground">
+                          <AlertCircle className="h-4 w-4 shrink-0" />
+                          This enrolment has been made inactive. Please contact us if you have any questions.
+                        </div>
+                      )}
+
                       {/* Enrollment details */}
                       <dl className="space-y-2 text-sm">
                         <Detail icon={ShieldCheck} label="Reference" value={e.referenceNumber} />
                         <Detail icon={CalendarDays} label="Club" value={e.club} />
-                        <ChangeSlot
-                          enrollmentId={e.id}
-                          clubId={e.clubId}
-                          weekday={e.slotWeekday}
-                          hour={e.slotHour != null ? parseFloat(String(e.slotHour)) : null}
-                          ageGroup={(e.slotAgeGroup as import("@/lib/db/schema").AgeGroup) ?? null}
-                          packageName={e.packageName ?? null}
-                        />
+                        {!isInactive && (
+                          <ChangeSlot
+                            enrollmentId={e.id}
+                            clubId={e.clubId}
+                            weekday={e.slotWeekday}
+                            hour={e.slotHour != null ? parseFloat(String(e.slotHour)) : null}
+                            ageGroup={(e.slotAgeGroup as import("@/lib/db/schema").AgeGroup) ?? null}
+                            packageName={e.packageName ?? null}
+                          />
+                        )}
                         <Detail icon={User} label="Age" value={`${e.childAge} years`} />
                         <Detail icon={Mail} label="Email" value={e.parentEmail} />
                         <Detail icon={Phone} label="Mobile" value={e.parentMobile} />
@@ -206,89 +224,94 @@ export default async function DashboardPage() {
                         )}
                       </dl>
 
-                      {/* Payment status */}
-                      <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Payment</p>
-                        <div className="flex flex-wrap items-center gap-2 text-sm">
-                          <CreditCard className="h-4 w-4 text-lime" />
-                          <span className="text-navy font-medium">Status:</span>
-                          <span className={`rounded-full px-2 py-0.5 text-xs font-bold capitalize ${
-                            PAYMENT_STATUS_STYLES[e.paymentStatus ?? "pending"] ?? "bg-muted text-muted-foreground"
-                          }`}>
-                            {(e.paymentStatus ?? "pending").replace("_", " ")}
-                          </span>
-                        </div>
-
-                        {/* Subscription info for monthly */}
-                        {isMonthly && subscription && (
-                          <>
+                      {/* Payment section — only show for active enrolments */}
+                      {!isInactive && (
+                        <>
+                          {/* Payment status */}
+                          <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Payment</p>
                             <div className="flex flex-wrap items-center gap-2 text-sm">
-                              <RefreshCw className="h-4 w-4 text-lime" />
-                              <span className="text-navy font-medium">Subscription:</span>
+                              <CreditCard className="h-4 w-4 text-lime" />
+                              <span className="text-navy font-medium">Status:</span>
                               <span className={`rounded-full px-2 py-0.5 text-xs font-bold capitalize ${
-                                SUBSCRIPTION_STATUS_STYLES[subscription.status] ?? "bg-muted text-muted-foreground"
+                                PAYMENT_STATUS_STYLES[e.paymentStatus ?? "pending"] ?? "bg-muted text-muted-foreground"
                               }`}>
-                                {subscription.status.replace("_", " ")}
+                                {(e.paymentStatus ?? "pending").replace("_", " ")}
                               </span>
                             </div>
-                            {subscription.nextBillingDate && (
-                              <div className="flex items-center gap-2 text-sm">
-                                <Clock className="h-4 w-4 text-lime" />
-                                <span className="text-muted-foreground">Next billing:</span>
-                                <span className="font-semibold text-navy">{formatDate(subscription.nextBillingDate)}</span>
-                              </div>
-                            )}
-                            {subscription.lastPaymentDate && (
-                              <div className="flex items-center gap-2 text-sm">
-                                <CheckCircle2 className="h-4 w-4 text-lime" />
-                                <span className="text-muted-foreground">Last payment:</span>
-                                <span className="font-semibold text-navy">{formatDate(subscription.lastPaymentDate)}</span>
-                              </div>
-                            )}
-                            {subscription.amount && (
-                              <div className="flex items-center gap-2 text-sm">
-                                <Receipt className="h-4 w-4 text-lime" />
-                                <span className="text-muted-foreground">Monthly amount:</span>
-                                <span className="font-semibold text-navy">{formatCents(subscription.amount)}</span>
-                              </div>
-                            )}
-                          </>
-                        )}
 
-                        {/* Pending payment prompt */}
-                        {(e.paymentStatus === "pending" || e.paymentStatus === "awaiting_payment" || e.paymentStatus == null) && (
-                          <div className="flex items-center gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
-                            <AlertCircle className="h-4 w-4 shrink-0" />
-                            Payment pending. If you have not yet completed payment, please contact us.
-                          </div>
-                        )}
-
-                        {e.paymentStatus === "failed" && (
-                          <div className="flex items-center gap-2 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
-                            <XCircle className="h-4 w-4 shrink-0" />
-                            Your last payment failed. Please contact us to retry.
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Payment history */}
-                      {enrollmentPayments.length > 0 && (
-                        <div>
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Payment History</p>
-                          <div className="space-y-1">
-                            {enrollmentPayments.slice(0, 5).map((p) => (
-                              <div key={p.id} className="flex items-center justify-between gap-2 rounded-md bg-muted/30 px-3 py-2 text-xs">
-                                <div className="flex items-center gap-2">
-                                  {p.status === "paid"
-                                    ? <CheckCircle2 className="h-3.5 w-3.5 text-lime-600" />
-                                    : <XCircle className="h-3.5 w-3.5 text-red-500" />}
-                                  <span className="capitalize text-muted-foreground">{formatDate(p.paidAt ?? p.createdAt)}</span>
+                            {/* Subscription info for monthly */}
+                            {isMonthly && subscription && (
+                              <>
+                                <div className="flex flex-wrap items-center gap-2 text-sm">
+                                  <RefreshCw className="h-4 w-4 text-lime" />
+                                  <span className="text-navy font-medium">Subscription:</span>
+                                  <span className={`rounded-full px-2 py-0.5 text-xs font-bold capitalize ${
+                                    SUBSCRIPTION_STATUS_STYLES[subscription.status] ?? "bg-muted text-muted-foreground"
+                                  }`}>
+                                    {subscription.status.replace("_", " ")}
+                                  </span>
                                 </div>
-                                <span className="font-bold text-navy">{formatCents(p.amount)}</span>
+                                {subscription.nextBillingDate && (
+                                  <div className="flex items-center gap-2 text-sm">
+                                    <Clock className="h-4 w-4 text-lime" />
+                                    <span className="text-muted-foreground">Next billing:</span>
+                                    <span className="font-semibold text-navy">{formatDate(subscription.nextBillingDate)}</span>
+                                  </div>
+                                )}
+                                {subscription.lastPaymentDate && (
+                                  <div className="flex items-center gap-2 text-sm">
+                                    <CheckCircle2 className="h-4 w-4 text-lime" />
+                                    <span className="text-muted-foreground">Last payment:</span>
+                                    <span className="font-semibold text-navy">{formatDate(subscription.lastPaymentDate)}</span>
+                                  </div>
+                                )}
+                                {subscription.amount && (
+                                  <div className="flex items-center gap-2 text-sm">
+                                    <Receipt className="h-4 w-4 text-lime" />
+                                    <span className="text-muted-foreground">Monthly amount:</span>
+                                    <span className="font-semibold text-navy">{formatCents(subscription.amount)}</span>
+                                  </div>
+                                )}
+                              </>
+                            )}
+
+                            {/* Pending payment prompt */}
+                            {(e.paymentStatus === "pending" || e.paymentStatus === "awaiting_payment" || e.paymentStatus == null) && (
+                              <div className="flex items-center gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                                <AlertCircle className="h-4 w-4 shrink-0" />
+                                Payment pending. If you have not yet completed payment, please contact us.
                               </div>
-                            ))}
+                            )}
+
+                            {e.paymentStatus === "failed" && (
+                              <div className="flex items-center gap-2 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                                <XCircle className="h-4 w-4 shrink-0" />
+                                Your last payment failed. Please contact us to retry.
+                              </div>
+                            )}
                           </div>
-                        </div>
+
+                          {/* Payment history */}
+                          {enrollmentPayments.length > 0 && (
+                            <div>
+                              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Payment History</p>
+                              <div className="space-y-1">
+                                {enrollmentPayments.slice(0, 5).map((p) => (
+                                  <div key={p.id} className="flex items-center justify-between gap-2 rounded-md bg-muted/30 px-3 py-2 text-xs">
+                                    <div className="flex items-center gap-2">
+                                      {p.status === "paid"
+                                        ? <CheckCircle2 className="h-3.5 w-3.5 text-lime-600" />
+                                        : <XCircle className="h-3.5 w-3.5 text-red-500" />}
+                                      <span className="capitalize text-muted-foreground">{formatDate(p.paidAt ?? p.createdAt)}</span>
+                                    </div>
+                                    <span className="font-bold text-navy">{formatCents(p.amount)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   </article>

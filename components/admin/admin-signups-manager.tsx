@@ -4,8 +4,8 @@ import { useState, useTransition, useMemo, useRef, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import {
   FileText, Mail, RefreshCw, Check, X, Pencil,
-  ChevronDown, ChevronUp, Trash2, Plus, Filter, Search, Link2, UserPlus, Eye,
-  CreditCard, Building2, Landmark, Tag,
+  ChevronDown, ChevronUp, Plus, Filter, Search, Link2, UserPlus, Eye,
+  CreditCard, Building2, Landmark, Tag, PowerOff, RotateCcw,
 } from "lucide-react"
 import {
   type AdminSignup,
@@ -15,7 +15,8 @@ import {
   regenerateContract,
   resendWelcome,
   updateSignup,
-  deleteSignup,
+  deactivateSignup,
+  reactivateSignup,
   createSignup,
   searchUsers,
 } from "@/app/actions/admin-signups"
@@ -62,7 +63,7 @@ function ageGroupFromAge(age: number | string | null | undefined): string {
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 const HOURS = Array.from({ length: 11 }, (_, i) => i + 8)
-const STATUS_OPTIONS = ["active", "pending", "cancelled", "on-hold"]
+const STATUS_OPTIONS = ["active", "pending", "cancelled", "on-hold", "inactive"]
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -87,10 +88,12 @@ export function AdminSignupsManager({
   const [editing, setEditing] = useState<AdminSignup | null>(null)
   const [viewing, setViewing] = useState<AdminSignup | null>(null)
   const [expanded, setExpanded] = useState<number | null>(null)
-  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
+  const [confirmDeactivateId, setConfirmDeactivateId] = useState<number | null>(null)
+  const [confirmReactivateId, setConfirmReactivateId] = useState<number | null>(null)
 
   // Filters
+  const [filterEnrollmentState, setFilterEnrollmentState] = useState<"active" | "inactive" | "all">("active")
   const [filterCoach, setFilterCoach] = useState("")
   const [filterPackage, setFilterPackage] = useState("")
   const [filterClub, setFilterClub] = useState("")
@@ -151,7 +154,9 @@ export function AdminSignupsManager({
                   childAge: input.childAge,
                   packageName: input.packageName,
                   club: input.club,
+                  clubId: input.clubId ?? p.clubId,
                   coachName: input.coachName,
+                  coachId: input.coachId ?? p.coachId,
                   slotWeekday: input.slotWeekday,
                   slotHour: input.slotHour != null ? String(input.slotHour) : null,
                   slotLabel: slotLabel ?? null,
@@ -171,16 +176,30 @@ export function AdminSignupsManager({
     })
   }
 
-  function handleConfirmDelete(id: number) {
+  function handleDeactivate(id: number) {
     startTransition(async () => {
-      const res = await deleteSignup(id)
+      const res = await deactivateSignup(id)
       if (res.ok) {
-        setSignups((prev) => prev.filter((s) => s.id !== id))
-        setConfirmDeleteId(null)
+        setSignups((prev) => prev.map((s) => s.id === id ? { ...s, status: "inactive" } : s))
+        setConfirmDeactivateId(null)
         router.refresh()
       } else {
-        flash(id, false, res.error ?? "Delete failed")
-        setConfirmDeleteId(null)
+        flash(id, false, res.error ?? "Failed to deactivate")
+        setConfirmDeactivateId(null)
+      }
+    })
+  }
+
+  function handleReactivate(id: number) {
+    startTransition(async () => {
+      const res = await reactivateSignup(id)
+      if (res.ok) {
+        setSignups((prev) => prev.map((s) => s.id === id ? { ...s, status: "active" } : s))
+        setConfirmReactivateId(null)
+        router.refresh()
+      } else {
+        flash(id, false, res.error ?? "Failed to reactivate")
+        setConfirmReactivateId(null)
       }
     })
   }
@@ -200,6 +219,8 @@ export function AdminSignupsManager({
           childAge: input.childAge,
           packageName: input.packageName,
           club: input.club,
+          clubId: input.clubId ?? null,
+          coachId: input.coachId ?? null,
           coachName: input.coachName || null,
           slotWeekday: input.slotWeekday,
           slotHour: input.slotHour != null ? String(input.slotHour) : null,
@@ -252,15 +273,21 @@ export function AdminSignupsManager({
 
   const filtered = useMemo(() => {
     return signups.filter((s) => {
+      // Enrollment state tab filter
+      if (filterEnrollmentState === "active" && s.status === "inactive") return false
+      if (filterEnrollmentState === "inactive" && s.status !== "inactive") return false
+      // Sub-filters
       if (filterCoach && s.coachName !== filterCoach) return false
       if (filterPackage && s.packageName !== filterPackage) return false
       if (filterClub && s.club !== filterClub) return false
       if (filterStatus && s.status !== filterStatus) return false
       return true
     })
-  }, [signups, filterCoach, filterPackage, filterClub, filterStatus])
+  }, [signups, filterEnrollmentState, filterCoach, filterPackage, filterClub, filterStatus])
 
   const hasFilters = filterCoach || filterPackage || filterClub || filterStatus
+  const activeCount = signups.filter((s) => s.status !== "inactive").length
+  const inactiveCount = signups.filter((s) => s.status === "inactive").length
 
   function statusColor(status: string) {
     switch (status) {
@@ -268,6 +295,7 @@ export function AdminSignupsManager({
       case "pending": return "bg-amber-100 text-amber-800"
       case "cancelled": return "bg-red-100 text-red-700"
       case "on-hold": return "bg-gray-100 text-gray-600"
+      case "inactive": return "bg-muted/60 text-muted-foreground line-through"
       default: return "bg-muted text-muted-foreground"
     }
   }
@@ -293,8 +321,24 @@ export function AdminSignupsManager({
         </button>
       </div>
 
+      {/* Active / Inactive tabs */}
+      <div className="mt-4 flex gap-1 rounded-lg border border-border bg-muted/40 p-1 w-fit">
+        {(["active", "inactive", "all"] as const).map((f) => {
+          const count = f === "active" ? activeCount : f === "inactive" ? inactiveCount : signups.length
+          return (
+            <button
+              key={f}
+              onClick={() => { setFilterEnrollmentState(f); setFilterStatus("") }}
+              className={`rounded-md px-4 py-1.5 text-sm font-semibold transition-colors ${filterEnrollmentState === f ? "bg-card text-navy shadow-sm" : "text-muted-foreground hover:text-navy"}`}
+            >
+              {f === "active" ? "Active" : f === "inactive" ? "Inactive" : "All"} ({count})
+            </button>
+          )
+        })}
+      </div>
+
       {/* Filters */}
-      <div className="mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
+      <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
         <span className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
           <Filter className="h-3.5 w-3.5" />
           Filter
@@ -494,9 +538,15 @@ export function AdminSignupsManager({
                           ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                           : <Mail className="h-3.5 w-3.5" />}
                       </IconBtn>
-                      <IconBtn title="Remove sign-up" onClick={() => setConfirmDeleteId(s.id)} variant="danger">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </IconBtn>
+                      {s.status !== "inactive" ? (
+                        <IconBtn title="Make Inactive" onClick={() => setConfirmDeactivateId(s.id)} variant="warning">
+                          <PowerOff className="h-3.5 w-3.5" />
+                        </IconBtn>
+                      ) : (
+                        <IconBtn title="Reactivate" onClick={() => setConfirmReactivateId(s.id)} variant="success">
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </IconBtn>
+                      )}
                     </div>
                     {toast?.id === s.id && (
                       <p className={`mt-0.5 text-right text-[10px] font-semibold ${toast.ok ? "text-lime-foreground" : "text-destructive"}`}>
@@ -543,14 +593,27 @@ export function AdminSignupsManager({
         />
       )}
 
-      {/* Delete confirmation dialog */}
-      {confirmDeleteId != null && (
+      {/* Deactivate confirmation dialog */}
+      {confirmDeactivateId != null && (
         <ConfirmDialog
-          message="Are you sure you want to permanently remove this sign-up? This cannot be undone."
-          confirmLabel="Yes, remove"
+          message="Make this enrolment Inactive? The player will be hidden from the coaching portal and attendance registers. All data is preserved and can be restored at any time."
+          confirmLabel="Yes, make Inactive"
           pending={pending}
-          onConfirm={() => handleConfirmDelete(confirmDeleteId)}
-          onCancel={() => setConfirmDeleteId(null)}
+          onConfirm={() => handleDeactivate(confirmDeactivateId)}
+          onCancel={() => setConfirmDeactivateId(null)}
+          variant="warning"
+        />
+      )}
+
+      {/* Reactivate confirmation dialog */}
+      {confirmReactivateId != null && (
+        <ConfirmDialog
+          message="Reactivate this enrolment? The player will reappear in the coaching portal and attendance registers."
+          confirmLabel="Yes, reactivate"
+          pending={pending}
+          onConfirm={() => handleReactivate(confirmReactivateId)}
+          onCancel={() => setConfirmReactivateId(null)}
+          variant="success"
         />
       )}
     </div>
@@ -628,7 +691,7 @@ function IconBtn({
   disabled,
   variant = "ghost",
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "ghost" | "danger" | "success"
+  variant?: "ghost" | "danger" | "success" | "warning"
 }) {
   return (
     <button
@@ -641,6 +704,8 @@ function IconBtn({
           ? "text-red-500 hover:bg-red-50 hover:text-red-600"
           : variant === "success"
           ? "text-lime-foreground hover:bg-lime/20"
+          : variant === "warning"
+          ? "text-amber-600 hover:bg-amber-50 hover:text-amber-700"
           : "text-muted-foreground hover:bg-muted hover:text-navy"
       }`}
     >
@@ -818,17 +883,28 @@ function ConfirmDialog({
   pending,
   onConfirm,
   onCancel,
+  variant = "danger",
 }: {
   message: string
   confirmLabel: string
   pending: boolean
   onConfirm: () => void
   onCancel: () => void
+  variant?: "danger" | "warning" | "success"
 }) {
+  const btnClass =
+    variant === "warning"
+      ? "bg-amber-600 hover:bg-amber-700"
+      : variant === "success"
+      ? "bg-lime hover:bg-lime/90 text-lime-foreground"
+      : "bg-red-600 hover:bg-red-700"
+  const title =
+    variant === "warning" ? "Make Inactive" : variant === "success" ? "Reactivate" : "Confirm"
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-sm rounded-xl bg-card p-6 shadow-2xl">
-        <h3 className="text-base font-bold text-navy">Confirm removal</h3>
+        <h3 className="text-base font-bold text-navy">{title}</h3>
         <p className="mt-2 text-sm text-muted-foreground">{message}</p>
         <div className="mt-5 flex justify-end gap-2">
           <button
@@ -840,9 +916,9 @@ function ConfirmDialog({
           <button
             onClick={onConfirm}
             disabled={pending}
-            className="rounded-md bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50"
+            className={`rounded-md px-4 py-2 text-sm font-bold text-white disabled:opacity-50 ${btnClass}`}
           >
-            {pending ? "Removing…" : confirmLabel}
+            {pending ? "Saving…" : confirmLabel}
           </button>
         </div>
       </div>
@@ -886,7 +962,9 @@ function EditModal({
   const [childAge, setChildAge] = useState(String(signup.childAge ?? ""))
   const [packageName, setPackageName] = useState(signup.packageName)
   const [club, setClub] = useState(signup.club ?? "")
+  const [clubId, setClubId] = useState<number | null>(signup.clubId ?? null)
   const [coachName, setCoachName] = useState(signup.coachName ?? "")
+  const [coachId, setCoachId] = useState<number | null>(signup.coachId ?? null)
   const [slotWeekday, setSlotWeekday] = useState<string>(
     signup.slotWeekday != null ? String(signup.slotWeekday) : "",
   )
@@ -907,7 +985,7 @@ function EditModal({
     onSave({
       parentName, parentEmail, parentMobile,
       childName, childDob, childAge: Number(childAge) || 0,
-      packageName, club, coachName,
+      packageName, club, clubId, coachName, coachId,
       slotWeekday: slotWeekday !== "" ? Number(slotWeekday) : null,
       slotHour: slotHour !== "" ? Number(slotHour) : null,
       emergencyContactName: emergencyName,
@@ -934,8 +1012,8 @@ function EditModal({
           />
           <ProgrammeFields
             packageName={packageName} setPackageName={setPackageName}
-            club={club} setClub={setClub}
-            coachName={coachName} setCoachName={setCoachName}
+            club={club} setClub={setClub} setClubId={setClubId}
+            coachName={coachName} setCoachName={setCoachName} setCoachId={setCoachId}
             slotWeekday={slotWeekday} setSlotWeekday={setSlotWeekday}
             slotHour={slotHour} setSlotHour={setSlotHour}
             childAge={childAge}
@@ -1024,7 +1102,9 @@ function AddModal({
   const [childAge, setChildAge] = useState("")
   const [packageName, setPackageName] = useState(allPackages[0]?.name ?? "")
   const [club, setClub] = useState(allClubs[0]?.name ?? "")
+  const [clubId, setClubId] = useState<number | null>(allClubs[0]?.id ?? null)
   const [coachName, setCoachName] = useState("")
+  const [coachId, setCoachId] = useState<number | null>(null)
   const [slotWeekday, setSlotWeekday] = useState("")
   const [slotHour, setSlotHour] = useState("")
   const [emergencyName, setEmergencyName] = useState("")
@@ -1081,7 +1161,7 @@ function AddModal({
     onCreate({
       parentName, parentEmail, parentMobile,
       childName, childDob, childAge: Number(childAge) || 0,
-      packageName, club, coachName,
+      packageName, club, clubId, coachName, coachId,
       slotWeekday: slotWeekday !== "" ? Number(slotWeekday) : null,
       slotHour: slotHour !== "" ? Number(slotHour) : null,
       emergencyContactName: emergencyName,
@@ -1202,8 +1282,8 @@ function AddModal({
           />
           <ProgrammeFields
             packageName={packageName} setPackageName={setPackageName}
-            club={club} setClub={setClub}
-            coachName={coachName} setCoachName={setCoachName}
+            club={club} setClub={setClub} setClubId={setClubId}
+            coachName={coachName} setCoachName={setCoachName} setCoachId={setCoachId}
             slotWeekday={slotWeekday} setSlotWeekday={setSlotWeekday}
             slotHour={slotHour} setSlotHour={setSlotHour}
             childAge={childAge}
@@ -1327,8 +1407,8 @@ function ChildFields({ childName, setChildName, childDob, setChildDob, childAge,
 
 function ProgrammeFields({
   packageName, setPackageName,
-  club, setClub,
-  coachName, setCoachName,
+  club, setClub, setClubId,
+  coachName, setCoachName, setCoachId,
   slotWeekday, setSlotWeekday,
   slotHour, setSlotHour,
   childAge,
@@ -1336,7 +1416,9 @@ function ProgrammeFields({
 }: {
   packageName: string; setPackageName: (v: string) => void
   club: string; setClub: (v: string) => void
+  setClubId?: (v: number | null) => void
   coachName: string; setCoachName: (v: string) => void
+  setCoachId?: (v: number | null) => void
   slotWeekday: string; setSlotWeekday: (v: string) => void
   slotHour: string; setSlotHour: (v: string) => void
   childAge?: string | number | null
@@ -1351,6 +1433,27 @@ function ProgrammeFields({
   // Resolve the clubId from the selected club name
   const selectedClub = allClubs.find((c) => c.name === club) ?? null
   const clubId = selectedClub?.id ?? undefined
+
+  // When club changes, update the clubId state and auto-assign first matching coach
+  function handleClubChange(newClubName: string) {
+    setClub(newClubName)
+    const newClub = allClubs.find((c) => c.name === newClubName) ?? null
+    setClubId?.(newClub?.id ?? null)
+    // Auto-set coach to the first coach assigned to this club (if not already manually set)
+    if (newClub) {
+      const firstCoach = allCoaches.find((c) => c.clubIds.includes(newClub.id))
+      if (firstCoach) {
+        setCoachName(firstCoach.name)
+        setCoachId?.(firstCoach.id)
+      }
+    }
+  }
+
+  function handleCoachChange(newCoachName: string) {
+    setCoachName(newCoachName)
+    const coach = allCoaches.find((c) => c.name === newCoachName) ?? null
+    setCoachId?.(coach?.id ?? null)
+  }
 
   // Derive age group from child's age for the slot picker
   const ageGroup = ageGroupFromAge(childAge)
@@ -1379,7 +1482,7 @@ function ProgrammeFields({
           </select>
         </Field>
         <Field label="Club">
-          <select value={club} onChange={(e) => setClub(e.target.value)} className={selectCls}>
+          <select value={club} onChange={(e) => handleClubChange(e.target.value)} className={selectCls}>
             {allClubs.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
             {club && !allClubs.find((c) => c.name === club) && (
               <option value={club}>{club}</option>
@@ -1387,7 +1490,7 @@ function ProgrammeFields({
           </select>
         </Field>
         <Field label="Coach">
-          <select value={coachName} onChange={(e) => setCoachName(e.target.value)} className={selectCls}>
+          <select value={coachName} onChange={(e) => handleCoachChange(e.target.value)} className={selectCls}>
             <option value="">— not assigned —</option>
             {allCoaches.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
           </select>

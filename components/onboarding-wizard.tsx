@@ -49,6 +49,7 @@ export function OnboardingWizard({ clubs, packages, schools }: { clubs: Club[]; 
   const [step, setStep] = useState(0)
 
   const isOnceOff = selectedPackage?.period === "once-off"
+  const isAdvanced = selectedPackage?.slug === "advanced"
   // Treat as school package if the isSchool flag is set OR the slug contains "school"
   const isSchoolPackage =
     selectedPackage?.isSchool === true ||
@@ -73,6 +74,8 @@ export function OnboardingWizard({ clubs, packages, schools }: { clubs: Club[]; 
   const [clubId, setClubId] = useState<number | null>(null)
   const [schoolId, setSchoolId] = useState<number | null>(null)
   const [slot, setSlot] = useState<SelectedSlot | null>(null)
+  // Second coaching session slot — required for the Advanced package (2 sessions/week)
+  const [slot2, setSlot2] = useState<SelectedSlot | null>(null)
   const [ageGroup, setAgeGroup] = useState<AgeGroup | null>(null)
   const [parent, setParent] = useState({ firstName: "", lastName: "", email: "", mobile: "", password: "" })
   const [emergency, setEmergency] = useState({ name: "", phone: "" })
@@ -491,7 +494,7 @@ export function OnboardingWizard({ clubs, packages, schools }: { clubs: Club[]; 
                     <button
                       key={c.id}
                       type="button"
-                      onClick={() => { setClubId(c.id); setSlot(null); }}
+                      onClick={() => { setClubId(c.id); setSlot(null); setSlot2(null); }}
                       className={`w-full rounded-card border p-4 text-left transition-colors ${
                         clubId === c.id ? "border-lime bg-lime/10" : "border-border bg-card hover:border-lime/50"
                       }`}
@@ -504,8 +507,43 @@ export function OnboardingWizard({ clubs, packages, schools }: { clubs: Club[]; 
                 {clubId && selectedPackage?.slotType === "custom" ? (
                   <div className="mt-6">
                     <p className="block text-sm font-semibold text-navy">Available Time Slots</p>
-                    <p className="mb-3 text-xs text-muted-foreground">This package runs at fixed times. Pick a slot below.</p>
-                    <PackageSlotPicker packageId={selectedPackage.id} packageName={selectedPackage.name} ageGroup={ageGroup ?? "4-8"} clubId={clubId ?? undefined} selected={slot} onSelect={setSlot} />
+                    {isAdvanced ? (
+                      <p className="mb-3 text-xs text-muted-foreground">
+                        Select two coaching sessions on <strong>different days</strong> (2 sessions per week, 8 sessions per month).
+                      </p>
+                    ) : (
+                      <p className="mb-3 text-xs text-muted-foreground">This package runs at fixed times. Pick a slot below.</p>
+                    )}
+                    {/* First coaching session */}
+                    {isAdvanced && (
+                      <p className="mb-2 text-sm font-semibold text-navy">First Coaching Session</p>
+                    )}
+                    <PackageSlotPicker
+                      packageId={selectedPackage.id}
+                      packageName={selectedPackage.name}
+                      ageGroup={ageGroup ?? "4-8"}
+                      clubId={clubId ?? undefined}
+                      selected={slot}
+                      onSelect={(s) => { setSlot(s); setSlot2(null); }}
+                    />
+                    {/* Second coaching session — Advanced package only */}
+                    {isAdvanced && (
+                      <div className="mt-6">
+                        <div className="flex items-center gap-2 mb-2">
+                          <p className="text-sm font-semibold text-navy">Second Coaching Session</p>
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Different day required</span>
+                        </div>
+                        <PackageSlotPicker
+                          packageId={selectedPackage.id}
+                          packageName={selectedPackage.name}
+                          ageGroup={ageGroup ?? "4-8"}
+                          clubId={clubId ?? undefined}
+                          selected={slot2}
+                          disabledWeekday={slot?.weekday}
+                          onSelect={setSlot2}
+                        />
+                      </div>
+                    )}
                   </div>
                 ) : clubId && ageGroup ? (
                   <div className="mt-6">
@@ -514,7 +552,7 @@ export function OnboardingWizard({ clubs, packages, schools }: { clubs: Club[]; 
                     <SlotPicker clubId={clubId} ageGroup={ageGroup} selected={slot} onSelect={setSlot} />
                   </div>
                 ) : null}
-                <StepNav onBack={() => setStep(1)} onNext={() => setStep(3)} nextDisabled={!clubId || !slot} />
+                <StepNav onBack={() => setStep(1)} onNext={() => setStep(3)} nextDisabled={!clubId || !slot || (isAdvanced && !slot2)} />
               </>
             )}
           </div>
@@ -610,7 +648,10 @@ export function OnboardingWizard({ clubs, packages, schools }: { clubs: Club[]; 
               ) : (
                 <>
                   <Row label="Club" value={selectedClub?.name ?? ""} />
-                  <Row label="Time Slot" value={slot ? formatSlot(slot.weekday, slot.hour) : ""} />
+                  <Row label={isAdvanced ? "First Session" : "Time Slot"} value={slot ? formatSlot(slot.weekday, slot.hour) : ""} />
+                  {isAdvanced && slot2 && (
+                    <Row label="Second Session" value={formatSlot(slot2.weekday, slot2.hour)} />
+                  )}
                 </>
               )}
 
