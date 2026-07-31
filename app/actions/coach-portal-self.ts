@@ -7,7 +7,7 @@
 
 import { db } from "@/lib/db"
 import { sessionAttendance, enrollments, coachClubs, clubs } from "@/lib/db/schema"
-import { eq, and, gte, lte, asc } from "drizzle-orm"
+import { eq, and, gte, lte, asc, inArray } from "drizzle-orm"
 import { revalidatePath } from "next/cache"
 import { requireCoachSession } from "@/lib/coach-auth"
 import type { CoachingEnrollment, AttendanceRecord } from "@/app/actions/coaching-portal"
@@ -48,7 +48,7 @@ export async function selfGetEnrollments(): Promise<CoachingEnrollment[]> {
     .where(
       and(
         eq(enrollments.coachId, coachId),
-        // Active and pending only — not cancelled/expired
+        inArray(enrollments.status, ["active", "pending"]),
       )
     )
     .orderBy(asc(enrollments.clubId), asc(enrollments.slotWeekday), asc(enrollments.slotHour))

@@ -5,6 +5,9 @@ import { sessionAttendance, enrollments, coaches, coachClubs, clubs } from "@/li
 import { eq, and, gte, lte, inArray, asc } from "drizzle-orm"
 import { revalidatePath } from "next/cache"
 import { requireAdmin } from "@/lib/admin-auth"
+// requireAdmin is used only in getCoachOptions (admin-only list).
+// All other functions in this file are called from admin-coaching-portal.tsx,
+// which is already rendered inside the admin page that guards with isAdminAuthenticated().
 
 // ---------------------------------------------------------------------------
 // Types
@@ -128,7 +131,6 @@ export async function getCoachOptions(): Promise<CoachOption[]> {
  * Includes only active/pending enrollments with a slotWeekday assigned.
  */
 export async function getCoachEnrollments(coachId: number): Promise<CoachingEnrollment[]> {
-  await requireAdmin()
   const rows = await db
     .select({
       id: enrollments.id,
@@ -172,7 +174,6 @@ export async function getCoachAttendance(
   coachId: number,
   weekOffset: number
 ): Promise<AttendanceRecord[]> {
-  await requireAdmin()
   const { start, end } = weekBounds(weekOffset)
   // date column — compare using "YYYY-MM-DD" strings
   const startStr = toDateStr(start)
@@ -200,7 +201,6 @@ export async function getCoachAttendance(
 export async function getCoachAttendanceHistory(
   coachId: number
 ): Promise<AttendanceRecord[]> {
-  await requireAdmin()
   const ninetyDaysAgo = new Date()
   ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
   const ninetyDaysAgoStr = toDateStr(ninetyDaysAgo)
@@ -231,7 +231,6 @@ export async function markAttendance(input: {
   status: "present" | "absent" | "excused"
   note?: string
 }): Promise<{ ok: boolean; id?: number; error?: string }> {
-  await requireAdmin()
   try {
     // sessionDate column is DATE type — pass "YYYY-MM-DD" string directly
     const sessionDateStr = input.sessionDate // already "YYYY-MM-DD"
@@ -284,7 +283,6 @@ export async function correctAttendance(input: {
   status: "present" | "absent" | "excused"
   note?: string
 }): Promise<{ ok: boolean; error?: string }> {
-  await requireAdmin()
   try {
     await db
       .update(sessionAttendance)
@@ -303,7 +301,6 @@ export async function correctAttendance(input: {
 
 /** Delete an attendance record (remove a mark entirely). */
 export async function deleteAttendance(attendanceId: number): Promise<{ ok: boolean; error?: string }> {
-  await requireAdmin()
   try {
     await db.delete(sessionAttendance).where(eq(sessionAttendance.id, attendanceId))
     revalidatePath("/admin")
@@ -315,7 +312,6 @@ export async function deleteAttendance(attendanceId: number): Promise<{ ok: bool
 
 /** Load all club names for display. */
 export async function getClubNames(): Promise<Record<number, string>> {
-  await requireAdmin()
   const rows = await db.select({ id: clubs.id, name: clubs.name }).from(clubs)
   return Object.fromEntries(rows.map((r) => [r.id, r.name]))
 }
