@@ -1,8 +1,8 @@
 "use server"
 
-import { desc, eq, ilike, or } from "drizzle-orm"
+import { asc, desc, eq, ilike, or } from "drizzle-orm"
 import { db } from "@/lib/db"
-import { enrollments, user } from "@/lib/db/schema"
+import { enrollments, user, coachClubs, coaches } from "@/lib/db/schema"
 import { requireAdmin } from "@/lib/admin-auth"
 import { generateContractPdf } from "@/lib/contract-pdf"
 import { sendWelcomeEmail } from "@/lib/email"
@@ -22,6 +22,8 @@ export type AdminSignup = {
   childAge: number | null
   packageName: string
   club: string | null
+  clubId: number | null
+  coachId: number | null
   coachName: string | null
   slotWeekday: number | null
   // numeric column returns string from Drizzle; parse with parseFloat before display
@@ -55,7 +57,9 @@ export type UpdateSignupInput = {
   childAge: number
   packageName: string
   club: string
+  clubId?: number | null
   coachName: string
+  coachId?: number | null
   slotWeekday: number | null
   slotHour: number | null
   emergencyContactName: string
@@ -78,6 +82,8 @@ export async function getAllSignups(): Promise<AdminSignup[]> {
     childAge: r.childAge ?? null,
     packageName: r.packageName,
     club: r.club ?? null,
+    clubId: r.clubId ?? null,
+    coachId: r.coachId ?? null,
     coachName: r.coachName ?? null,
     slotWeekday: r.slotWeekday ?? null,
     slotHour: r.slotHour ?? null,
@@ -120,7 +126,9 @@ export async function updateSignup(
         childAge: input.childAge,
         packageName: input.packageName.trim(),
         club: input.club.trim(),
+        clubId: input.clubId ?? undefined,
         coachName: input.coachName.trim() || null,
+        ...(input.coachId !== undefined && { coachId: input.coachId }),
         slotWeekday: input.slotWeekday ?? undefined,
         slotHour: input.slotHour != null ? String(input.slotHour) : undefined,
         emergencyContactName: input.emergencyContactName.trim() || undefined,
@@ -276,7 +284,9 @@ export type CreateSignupInput = {
   childAge: number
   packageName: string
   club: string
+  clubId?: number | null
   coachName: string
+  coachId?: number | null
   slotWeekday: number | null
   slotHour: number | null
   emergencyContactName: string
@@ -289,6 +299,23 @@ export type CreateSignupInput = {
   linkUserId?: string
 }
 
+/** Resolve the first coach assigned to a club (used by admin createSignup). */
+async function resolveCoachForClub(clubId: number | null | undefined): Promise<{ coachId: number; coachName: string } | null> {
+  if (!clubId) return null
+  try {
+    const rows = await db
+      .select({ coachId: coachClubs.coachId, coachName: coaches.name })
+      .from(coachClubs)
+      .innerJoin(coaches, eq(coaches.id, coachClubs.coachId))
+      .where(eq(coachClubs.clubId, clubId))
+      .orderBy(asc(coachClubs.coachId))
+      .limit(1)
+    return rows[0] ?? null
+  } catch {
+    return null
+  }
+}
+
 /** Manually create a sign-up from the admin dashboard. */
 export async function createSignup(input: CreateSignupInput): Promise<{ ok: boolean; id?: number; referenceNumber?: string; error?: string }> {
   await requireAdmin()
@@ -297,6 +324,18 @@ export async function createSignup(input: CreateSignupInput): Promise<{ ok: bool
     // Use the linked user's ID so the parent sees this on their dashboard,
     // or fall back to "admin" for unlinked / new-account enrollments.
     const userId = input.linkUserId ?? "admin"
+
+    // Auto-assign coach from club if not explicitly provided
+    let resolvedCoachId = input.coachId ?? null
+    let resolvedCoachName = input.coachName.trim() || null
+    if (!resolvedCoachId && input.clubId) {
+      const autoCoach = await resolveCoachForClub(input.clubId)
+      if (autoCoach) {
+        resolvedCoachId = autoCoach.coachId
+        if (!resolvedCoachName) resolvedCoachName = autoCoach.coachName
+      }
+    }
+
     const [row] = await db
       .insert(enrollments)
       .values({
@@ -310,7 +349,9 @@ export async function createSignup(input: CreateSignupInput): Promise<{ ok: bool
         childAge: input.childAge,
         packageName: input.packageName.trim(),
         club: input.club.trim(),
-        coachName: input.coachName.trim() || null,
+        clubId: input.clubId ?? undefined,
+        coachId: resolvedCoachId ?? undefined,
+        coachName: resolvedCoachName,
         slotWeekday: input.slotWeekday ?? undefined,
         slotHour: input.slotHour != null ? String(input.slotHour) : undefined,
         emergencyContactName: input.emergencyContactName.trim() || undefined,

@@ -9,11 +9,6 @@ import type { VoucherCampaign } from "@/lib/db/schema"
 import {
   adminUpdateCampaign,
   adminCreateCampaign,
-  adminDeleteCampaign,
-  adminUpdateVoucher,
-  adminDeleteVoucher,
-  adminUpdateReferral,
-  adminDeleteReferral,
   issueBootcampVoucher,
 } from "@/app/actions/referrals"
 
@@ -74,79 +69,16 @@ export function AdminReferralsManager({
 // ---------------------------------------------------------------------------
 
 function ReferralsTab({ rows }: { rows: AdminReferralRow[] }) {
-  const [referralList, setReferralList] = useState(rows)
-  const [editingId, setEditingId] = useState<number | null>(null)
-  const [editForm, setEditForm] = useState<{ status: string; completedAt: string }>({
-    status: "pending",
-    completedAt: "",
-  })
-  const [saving, setSaving] = useState(false)
-  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
-
-  const pending = referralList.filter((r) => r.status === "pending").length
-  const complete = referralList.filter((r) => r.status === "complete").length
-
-  function openEdit(r: AdminReferralRow) {
-    setEditingId(r.id)
-    setEditForm({
-      status: r.status,
-      completedAt: r.completedAt ? new Date(r.completedAt).toISOString().slice(0, 10) : "",
-    })
-    setDeleteConfirmId(null)
-  }
-
-  async function handleSave() {
-    if (!editingId) return
-    setSaving(true)
-    await adminUpdateReferral(editingId, {
-      status: editForm.status,
-      completedAt: editForm.completedAt ? new Date(editForm.completedAt) : null,
-    })
-    setReferralList((prev) =>
-      prev.map((r) =>
-        r.id === editingId
-          ? {
-              ...r,
-              status: editForm.status,
-              completedAt: editForm.completedAt ? new Date(editForm.completedAt) : null,
-            }
-          : r,
-      ),
-    )
-    setSaving(false)
-    setEditingId(null)
-  }
-
-  async function handleDelete(id: number) {
-    setDeleteError(null)
-    const result = await adminDeleteReferral(id)
-    if (result.error) {
-      setDeleteError(result.error)
-      setDeleteConfirmId(null)
-    } else {
-      setReferralList((prev) => prev.filter((r) => r.id !== id))
-      setDeleteConfirmId(null)
-    }
-  }
+  const pending = rows.filter((r) => r.status === "pending").length
+  const complete = rows.filter((r) => r.status === "complete").length
 
   return (
     <div className="space-y-4">
       <div className="flex gap-4">
-        <StatCard label="Total Referrals" value={referralList.length} />
+        <StatCard label="Total Referrals" value={rows.length} />
         <StatCard label="Pending" value={pending} />
         <StatCard label="Completed" value={complete} />
       </div>
-
-      {deleteError && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {deleteError}
-          <button type="button" onClick={() => setDeleteError(null)} className="ml-3 text-xs underline">
-            Dismiss
-          </button>
-        </div>
-      )}
-
       <div className="overflow-x-auto rounded-card border border-border">
         <table className="w-full text-sm">
           <thead>
@@ -156,121 +88,35 @@ function ReferralsTab({ rows }: { rows: AdminReferralRow[] }) {
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Referred On</th>
               <th className="px-4 py-3">Completed</th>
-              <th className="px-4 py-3">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {referralList.length === 0 && (
+            {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
                   No referrals yet.
                 </td>
               </tr>
             )}
-            {referralList.map((r) => (
-              <>
-                <tr key={r.id} className="border-b border-border last:border-0 hover:bg-muted/20">
-                  <td className="px-4 py-3">
-                    <p className="font-semibold text-navy">{r.referrerName}</p>
-                    <p className="text-xs text-muted-foreground">{r.referrerEmail}</p>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                    {r.enrollmentRef ?? "—"}
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={r.status} />
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground text-xs">
-                    {formatDate(r.createdAt)}
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground text-xs">
-                    {r.completedAt ? formatDate(r.completedAt) : "—"}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => openEdit(r)}
-                        className="rounded border border-border px-2 py-1 text-xs font-semibold text-navy hover:bg-muted"
-                      >
-                        Edit
-                      </button>
-                      {deleteConfirmId === r.id ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(r.id)}
-                            className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-100"
-                          >
-                            Confirm
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeleteConfirmId(null)}
-                            className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
-                          >
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => { setDeleteConfirmId(r.id); setEditingId(null) }}
-                          className="rounded border border-red-200 px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50"
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-                {/* Inline edit row */}
-                {editingId === r.id && (
-                  <tr key={`edit-${r.id}`} className="border-b border-border bg-muted/30">
-                    <td colSpan={6} className="px-4 py-3">
-                      <div className="flex flex-wrap items-end gap-3">
-                        <label className="block">
-                          <span className="text-xs font-semibold text-navy">Status</span>
-                          <select
-                            value={editForm.status}
-                            onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
-                            className="mt-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-lime"
-                          >
-                            <option value="pending">Pending</option>
-                            <option value="complete">Complete</option>
-                          </select>
-                        </label>
-                        <label className="block">
-                          <span className="text-xs font-semibold text-navy">Completed date</span>
-                          <input
-                            type="date"
-                            value={editForm.completedAt}
-                            onChange={(e) => setEditForm((f) => ({ ...f, completedAt: e.target.value }))}
-                            className="mt-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-lime"
-                          />
-                        </label>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            disabled={saving}
-                            onClick={handleSave}
-                            className="rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-                          >
-                            {saving ? "Saving..." : "Save"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setEditingId(null)}
-                            className="rounded-md border border-border px-4 py-2 text-sm text-muted-foreground"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </>
+            {rows.map((r) => (
+              <tr key={r.id} className="border-b border-border last:border-0 hover:bg-muted/20">
+                <td className="px-4 py-3">
+                  <p className="font-semibold text-navy">{r.referrerName}</p>
+                  <p className="text-xs text-muted-foreground">{r.referrerEmail}</p>
+                </td>
+                <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                  {r.enrollmentRef ?? "—"}
+                </td>
+                <td className="px-4 py-3">
+                  <StatusBadge status={r.status} />
+                </td>
+                <td className="px-4 py-3 text-muted-foreground">
+                  {formatDate(r.createdAt)}
+                </td>
+                <td className="px-4 py-3 text-muted-foreground">
+                  {r.completedAt ? formatDate(r.completedAt) : "—"}
+                </td>
+              </tr>
             ))}
           </tbody>
         </table>
@@ -294,21 +140,12 @@ function VouchersTab({
   const [issueUserId, setIssueUserId] = useState("")
   const [issueResult, setIssueResult] = useState<string | null>(null)
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "used" | "expired">("all")
-  const [voucherList, setVoucherList] = useState(rows)
-  const [editingVoucherId, setEditingVoucherId] = useState<number | null>(null)
-  const [editVoucherForm, setEditVoucherForm] = useState<{
-    discountPercent: number
-    status: string
-    expiresAt: string
-  }>({ discountPercent: 0, status: "active", expiresAt: "" })
-  const [saving, setSaving] = useState(false)
-  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
 
   const filtered =
-    filterStatus === "all" ? voucherList : voucherList.filter((v) => v.status === filterStatus)
+    filterStatus === "all" ? rows : rows.filter((v) => v.status === filterStatus)
 
-  const active = voucherList.filter((v) => v.status === "active").length
-  const used = voucherList.filter((v) => v.status === "used").length
+  const active = rows.filter((v) => v.status === "active").length
+  const used = rows.filter((v) => v.status === "used").length
 
   async function handleIssueBootcamp() {
     if (!issueUserId.trim()) return
@@ -324,50 +161,11 @@ function VouchersTab({
     }
   }
 
-  function openEditVoucher(v: AdminVoucherRow) {
-    setEditingVoucherId(v.id)
-    setEditVoucherForm({
-      discountPercent: v.discountPercent,
-      status: v.status,
-      expiresAt: v.expiresAt ? new Date(v.expiresAt).toISOString().slice(0, 10) : "",
-    })
-  }
-
-  async function handleSaveVoucher() {
-    if (!editingVoucherId) return
-    setSaving(true)
-    await adminUpdateVoucher(editingVoucherId, {
-      discountPercent: editVoucherForm.discountPercent,
-      status: editVoucherForm.status,
-      expiresAt: editVoucherForm.expiresAt ? new Date(editVoucherForm.expiresAt) : null,
-    })
-    setVoucherList((prev) =>
-      prev.map((v) =>
-        v.id === editingVoucherId
-          ? {
-              ...v,
-              discountPercent: editVoucherForm.discountPercent,
-              status: editVoucherForm.status,
-              expiresAt: editVoucherForm.expiresAt ? new Date(editVoucherForm.expiresAt) : null,
-            }
-          : v,
-      ),
-    )
-    setSaving(false)
-    setEditingVoucherId(null)
-  }
-
-  async function handleDeleteVoucher(id: number) {
-    await adminDeleteVoucher(id)
-    setVoucherList((prev) => prev.filter((v) => v.id !== id))
-    setDeleteConfirmId(null)
-  }
-
   return (
     <div className="space-y-4">
       {/* Stats */}
       <div className="flex gap-4">
-        <StatCard label="Total Vouchers" value={voucherList.length} />
+        <StatCard label="Total Vouchers" value={rows.length} />
         <StatCard label="Active" value={active} />
         <StatCard label="Redeemed" value={used} />
       </div>
@@ -431,133 +229,35 @@ function VouchersTab({
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Expires</th>
               <th className="px-4 py-3">Used</th>
-              <th className="px-4 py-3">Actions</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                   No vouchers found.
                 </td>
               </tr>
             )}
             {filtered.map((v) => (
-              <>
-                <tr key={v.id} className="border-b border-border last:border-0 hover:bg-muted/20">
-                  <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">{v.code}</td>
-                  <td className="px-4 py-3">
-                    <p className="font-semibold text-navy">{v.userName}</p>
-                    <p className="text-xs text-muted-foreground">{v.userEmail}</p>
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">{v.campaignName}</td>
-                  <td className="px-4 py-3 font-bold text-lime-foreground">{v.discountPercent}%</td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={v.status} />
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground text-xs">
-                    {v.expiresAt ? formatDate(v.expiresAt) : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground text-xs">
-                    {v.usedAt ? formatDate(v.usedAt) : "—"}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => openEditVoucher(v)}
-                        className="rounded border border-border px-2 py-1 text-xs font-semibold text-navy hover:bg-muted"
-                      >
-                        Edit
-                      </button>
-                      {deleteConfirmId === v.id ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteVoucher(v.id)}
-                            className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-100"
-                          >
-                            Confirm
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeleteConfirmId(null)}
-                            className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
-                          >
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setDeleteConfirmId(v.id)}
-                          className="rounded border border-red-200 px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50"
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-                {/* Inline edit row */}
-                {editingVoucherId === v.id && (
-                  <tr key={`edit-${v.id}`} className="border-b border-border bg-muted/30">
-                    <td colSpan={8} className="px-4 py-3">
-                      <div className="flex flex-wrap items-end gap-3">
-                        <label className="block">
-                          <span className="text-xs font-semibold text-navy">Discount %</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={100}
-                            value={editVoucherForm.discountPercent}
-                            onChange={(e) => setEditVoucherForm((f) => ({ ...f, discountPercent: Number(e.target.value) }))}
-                            className="mt-1 w-24 rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-lime"
-                          />
-                        </label>
-                        <label className="block">
-                          <span className="text-xs font-semibold text-navy">Status</span>
-                          <select
-                            value={editVoucherForm.status}
-                            onChange={(e) => setEditVoucherForm((f) => ({ ...f, status: e.target.value }))}
-                            className="mt-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-lime"
-                          >
-                            <option value="active">Active</option>
-                            <option value="used">Used</option>
-                            <option value="expired">Expired</option>
-                          </select>
-                        </label>
-                        <label className="block">
-                          <span className="text-xs font-semibold text-navy">Expiry date</span>
-                          <input
-                            type="date"
-                            value={editVoucherForm.expiresAt}
-                            onChange={(e) => setEditVoucherForm((f) => ({ ...f, expiresAt: e.target.value }))}
-                            className="mt-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-lime"
-                          />
-                        </label>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            disabled={saving}
-                            onClick={handleSaveVoucher}
-                            className="rounded-md bg-navy px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-                          >
-                            {saving ? "Saving..." : "Save"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setEditingVoucherId(null)}
-                            className="rounded-md border border-border px-4 py-2 text-sm text-muted-foreground"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </>
+              <tr key={v.id} className="border-b border-border last:border-0 hover:bg-muted/20">
+                <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">{v.code}</td>
+                <td className="px-4 py-3">
+                  <p className="font-semibold text-navy">{v.userName}</p>
+                  <p className="text-xs text-muted-foreground">{v.userEmail}</p>
+                </td>
+                <td className="px-4 py-3 text-muted-foreground">{v.campaignName}</td>
+                <td className="px-4 py-3 font-bold text-lime-foreground">{v.discountPercent}%</td>
+                <td className="px-4 py-3">
+                  <StatusBadge status={v.status} />
+                </td>
+                <td className="px-4 py-3 text-muted-foreground text-xs">
+                  {v.expiresAt ? formatDate(v.expiresAt) : "—"}
+                </td>
+                <td className="px-4 py-3 text-muted-foreground text-xs">
+                  {v.usedAt ? formatDate(v.usedAt) : "—"}
+                </td>
+              </tr>
             ))}
           </tbody>
         </table>
@@ -575,8 +275,6 @@ function CampaignsTab({ campaigns: initial }: { campaigns: VoucherCampaign[] }) 
   const [editingId, setEditingId] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   const [showNew, setShowNew] = useState(false)
-  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [newForm, setNewForm] = useState({
     name: "",
     description: "",
@@ -610,18 +308,6 @@ function CampaignsTab({ campaigns: initial }: { campaigns: VoucherCampaign[] }) 
     setNewForm({ name: "", description: "", discountPercent: 10, appliesTo: "monthly", expiryDays: 90, enabled: true })
   }
 
-  async function handleDeleteCampaign(id: number) {
-    setDeleteError(null)
-    const result = await adminDeleteCampaign(id)
-    if (result.error) {
-      setDeleteError(result.error)
-      setDeleteConfirmId(null)
-    } else {
-      setCampaigns((prev) => prev.filter((c) => c.id !== id))
-      setDeleteConfirmId(null)
-    }
-  }
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -636,15 +322,6 @@ function CampaignsTab({ campaigns: initial }: { campaigns: VoucherCampaign[] }) 
           + New Campaign
         </button>
       </div>
-
-      {deleteError && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {deleteError}
-          <button type="button" onClick={() => setDeleteError(null)} className="ml-3 text-xs underline">
-            Dismiss
-          </button>
-        </div>
-      )}
 
       {/* New campaign form */}
       {showNew && (
@@ -725,41 +402,13 @@ function CampaignsTab({ campaigns: initial }: { campaigns: VoucherCampaign[] }) 
                     <span>Expiry: <strong className="text-navy">{c.expiryDays ? `${c.expiryDays} days` : "Never"}</strong></span>
                   </div>
                 </div>
-                <div className="flex shrink-0 flex-col items-end gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => { setEditingId(c.id); setDeleteConfirmId(null) }}
-                    className="rounded-md border border-border px-3 py-1.5 text-xs font-semibold text-navy hover:bg-muted"
-                  >
-                    Edit
-                  </button>
-                  {deleteConfirmId === c.id ? (
-                    <div className="flex gap-1">
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteCampaign(c.id)}
-                        className="rounded border border-red-300 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-100"
-                      >
-                        Confirm delete
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteConfirmId(null)}
-                        className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => { setDeleteConfirmId(c.id); setEditingId(null) }}
-                      className="rounded-md border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
-                    >
-                      Delete
-                    </button>
-                  )}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingId(c.id)}
+                  className="shrink-0 rounded-md border border-border px-3 py-1.5 text-xs font-semibold text-navy hover:bg-muted"
+                >
+                  Edit
+                </button>
               </div>
             )}
           </div>

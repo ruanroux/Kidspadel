@@ -28,10 +28,10 @@ export async function POST(request: NextRequest) {
   const filename = `clubs/${Date.now()}-${randomSuffix}.${ext}`
 
   const blob = await put(filename, file, {
-    access: "private",
+    access: "public",
     contentType: file.type,
   })
 
-  // Return the full blob URL so next/image can load it directly
+  // Return the full public blob URL — stored directly in the DB, no proxy needed
   return NextResponse.json({ url: blob.url })
 }

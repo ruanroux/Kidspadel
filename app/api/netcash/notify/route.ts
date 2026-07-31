@@ -268,7 +268,7 @@ export async function POST(req: NextRequest) {
           paymentStatus: "paid",
           status: "active",
           onboardingComplete: true,
-          payfastPaymentId: requestTrace, // reuses this column for the Netcash transaction ID
+          payfastPaymentId: requestTrace, // reuses existing column for transaction ID
           updatedAt: now,
         })
         .where(eq(enrollments.id, enrollmentRow.id))

@@ -32,9 +32,14 @@ export function ClubForm({
 
   // Image — prefer the new Blob pathname, fall back to legacy path
   const [imageUrl, setImageUrl] = useState<string | null>(club?.imageUrl ?? null)
-  // imagePreview is either a data: URL (local preview) or a proxied /api/blob URL
+  // imagePreview: data: URL (local), full https:// URL (public blob), local /images/ path, or proxied /api/blob
+  const resolvePreview = (url: string | null | undefined, fallback: string | null | undefined): string | null => {
+    if (!url) return fallback ?? null
+    if (url.startsWith("https://") || url.startsWith("http://") || url.startsWith("/")) return url
+    return `/api/blob?p=${encodeURIComponent(url)}`
+  }
   const [imagePreview, setImagePreview] = useState<string | null>(
-    club?.imageUrl ? `/api/blob?p=${encodeURIComponent(club.imageUrl)}` : (club?.image ?? null),
+    resolvePreview(club?.imageUrl, club?.image)
   )
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -61,7 +66,7 @@ export function ClubForm({
       setImageUrl(json.url)
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Upload failed")
-      setImagePreview(club?.imageUrl ? `/api/blob?p=${encodeURIComponent(club.imageUrl)}` : (club?.image ?? null))
+      setImagePreview(resolvePreview(club?.imageUrl, club?.image))
       setImageUrl(club?.imageUrl ?? null)
     } finally {
       setUploading(false)

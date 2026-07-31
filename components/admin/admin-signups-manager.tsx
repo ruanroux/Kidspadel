@@ -151,7 +151,9 @@ export function AdminSignupsManager({
                   childAge: input.childAge,
                   packageName: input.packageName,
                   club: input.club,
+                  clubId: input.clubId ?? p.clubId,
                   coachName: input.coachName,
+                  coachId: input.coachId ?? p.coachId,
                   slotWeekday: input.slotWeekday,
                   slotHour: input.slotHour != null ? String(input.slotHour) : null,
                   slotLabel: slotLabel ?? null,
@@ -200,6 +202,8 @@ export function AdminSignupsManager({
           childAge: input.childAge,
           packageName: input.packageName,
           club: input.club,
+          clubId: input.clubId ?? null,
+          coachId: input.coachId ?? null,
           coachName: input.coachName || null,
           slotWeekday: input.slotWeekday,
           slotHour: input.slotHour != null ? String(input.slotHour) : null,
@@ -886,7 +890,9 @@ function EditModal({
   const [childAge, setChildAge] = useState(String(signup.childAge ?? ""))
   const [packageName, setPackageName] = useState(signup.packageName)
   const [club, setClub] = useState(signup.club ?? "")
+  const [clubId, setClubId] = useState<number | null>(signup.clubId ?? null)
   const [coachName, setCoachName] = useState(signup.coachName ?? "")
+  const [coachId, setCoachId] = useState<number | null>(signup.coachId ?? null)
   const [slotWeekday, setSlotWeekday] = useState<string>(
     signup.slotWeekday != null ? String(signup.slotWeekday) : "",
   )
@@ -907,7 +913,7 @@ function EditModal({
     onSave({
       parentName, parentEmail, parentMobile,
       childName, childDob, childAge: Number(childAge) || 0,
-      packageName, club, coachName,
+      packageName, club, clubId, coachName, coachId,
       slotWeekday: slotWeekday !== "" ? Number(slotWeekday) : null,
       slotHour: slotHour !== "" ? Number(slotHour) : null,
       emergencyContactName: emergencyName,
@@ -934,8 +940,8 @@ function EditModal({
           />
           <ProgrammeFields
             packageName={packageName} setPackageName={setPackageName}
-            club={club} setClub={setClub}
-            coachName={coachName} setCoachName={setCoachName}
+            club={club} setClub={setClub} setClubId={setClubId}
+            coachName={coachName} setCoachName={setCoachName} setCoachId={setCoachId}
             slotWeekday={slotWeekday} setSlotWeekday={setSlotWeekday}
             slotHour={slotHour} setSlotHour={setSlotHour}
             childAge={childAge}
@@ -951,7 +957,7 @@ function EditModal({
             </select>
           </Field>
 
-          {/* Payment status — only for once-off packages */}
+          {/* Payment status — only for once-off (PayFast) packages */}
           {isOnceOff && (
             <Field label="Payment status">
               <div className="mt-1 flex gap-2">
@@ -1024,7 +1030,9 @@ function AddModal({
   const [childAge, setChildAge] = useState("")
   const [packageName, setPackageName] = useState(allPackages[0]?.name ?? "")
   const [club, setClub] = useState(allClubs[0]?.name ?? "")
+  const [clubId, setClubId] = useState<number | null>(allClubs[0]?.id ?? null)
   const [coachName, setCoachName] = useState("")
+  const [coachId, setCoachId] = useState<number | null>(null)
   const [slotWeekday, setSlotWeekday] = useState("")
   const [slotHour, setSlotHour] = useState("")
   const [emergencyName, setEmergencyName] = useState("")
@@ -1081,7 +1089,7 @@ function AddModal({
     onCreate({
       parentName, parentEmail, parentMobile,
       childName, childDob, childAge: Number(childAge) || 0,
-      packageName, club, coachName,
+      packageName, club, clubId, coachName, coachId,
       slotWeekday: slotWeekday !== "" ? Number(slotWeekday) : null,
       slotHour: slotHour !== "" ? Number(slotHour) : null,
       emergencyContactName: emergencyName,
@@ -1202,8 +1210,8 @@ function AddModal({
           />
           <ProgrammeFields
             packageName={packageName} setPackageName={setPackageName}
-            club={club} setClub={setClub}
-            coachName={coachName} setCoachName={setCoachName}
+            club={club} setClub={setClub} setClubId={setClubId}
+            coachName={coachName} setCoachName={setCoachName} setCoachId={setCoachId}
             slotWeekday={slotWeekday} setSlotWeekday={setSlotWeekday}
             slotHour={slotHour} setSlotHour={setSlotHour}
             childAge={childAge}
@@ -1327,8 +1335,8 @@ function ChildFields({ childName, setChildName, childDob, setChildDob, childAge,
 
 function ProgrammeFields({
   packageName, setPackageName,
-  club, setClub,
-  coachName, setCoachName,
+  club, setClub, setClubId,
+  coachName, setCoachName, setCoachId,
   slotWeekday, setSlotWeekday,
   slotHour, setSlotHour,
   childAge,
@@ -1336,7 +1344,9 @@ function ProgrammeFields({
 }: {
   packageName: string; setPackageName: (v: string) => void
   club: string; setClub: (v: string) => void
+  setClubId?: (v: number | null) => void
   coachName: string; setCoachName: (v: string) => void
+  setCoachId?: (v: number | null) => void
   slotWeekday: string; setSlotWeekday: (v: string) => void
   slotHour: string; setSlotHour: (v: string) => void
   childAge?: string | number | null
@@ -1351,6 +1361,27 @@ function ProgrammeFields({
   // Resolve the clubId from the selected club name
   const selectedClub = allClubs.find((c) => c.name === club) ?? null
   const clubId = selectedClub?.id ?? undefined
+
+  // When club changes, update the clubId state and auto-assign first matching coach
+  function handleClubChange(newClubName: string) {
+    setClub(newClubName)
+    const newClub = allClubs.find((c) => c.name === newClubName) ?? null
+    setClubId?.(newClub?.id ?? null)
+    // Auto-set coach to the first coach assigned to this club (if not already manually set)
+    if (newClub) {
+      const firstCoach = allCoaches.find((c) => c.clubIds.includes(newClub.id))
+      if (firstCoach) {
+        setCoachName(firstCoach.name)
+        setCoachId?.(firstCoach.id)
+      }
+    }
+  }
+
+  function handleCoachChange(newCoachName: string) {
+    setCoachName(newCoachName)
+    const coach = allCoaches.find((c) => c.name === newCoachName) ?? null
+    setCoachId?.(coach?.id ?? null)
+  }
 
   // Derive age group from child's age for the slot picker
   const ageGroup = ageGroupFromAge(childAge)
@@ -1379,7 +1410,7 @@ function ProgrammeFields({
           </select>
         </Field>
         <Field label="Club">
-          <select value={club} onChange={(e) => setClub(e.target.value)} className={selectCls}>
+          <select value={club} onChange={(e) => handleClubChange(e.target.value)} className={selectCls}>
             {allClubs.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
             {club && !allClubs.find((c) => c.name === club) && (
               <option value={club}>{club}</option>
@@ -1387,7 +1418,7 @@ function ProgrammeFields({
           </select>
         </Field>
         <Field label="Coach">
-          <select value={coachName} onChange={(e) => setCoachName(e.target.value)} className={selectCls}>
+          <select value={coachName} onChange={(e) => handleCoachChange(e.target.value)} className={selectCls}>
             <option value="">— not assigned —</option>
             {allCoaches.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
           </select>

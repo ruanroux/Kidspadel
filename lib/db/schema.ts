@@ -145,22 +145,6 @@ export const clubSlots = pgTable(
   }),
 )
 
-/** One line in the enrollment cart (one child → one package at one club). */
-export type CartItem = {
-  childName: string
-  childDob: string
-  childAge: number
-  packageName: string
-  packageSlug: string
-  packagePrice: number
-  clubId: number
-  clubName: string
-  slotWeekday: number
-  slotHour: number
-  slotAgeGroup: string
-  discountPercent: number
-}
-
 export const enrollments = pgTable("enrollments", {
   id: serial("id").primaryKey(),
   userId: text("userId").notNull(),
@@ -183,6 +167,10 @@ export const enrollments = pgTable("enrollments", {
   slotWeekday: integer("slotWeekday"),
   slotHour: numeric("slotHour", { precision: 4, scale: 1 }),
   slotAgeGroup: text("slotAgeGroup"),
+  // Slot 2 for advanced packages (2 sessions per week on different days)
+  slotWeekday2: integer("slotWeekday2"),
+  slotHour2: numeric("slotHour2", { precision: 4, scale: 1 }),
+  slotAgeGroup2: text("slotAgeGroup2"),
   // Debit order
   debitAccountHolder: text("debitAccountHolder"),
   debitBankName: text("debitBankName"),
@@ -227,10 +215,6 @@ export const enrollments = pgTable("enrollments", {
   // FK to vouchers(id) ON DELETE SET NULL — expressed in DB but not in Drizzle
   // schema to avoid a circular reference (vouchers is declared after enrollments).
   pendingVoucherId: integer("pending_voucher_id"),
-  // Multi-child cart checkout — shared reference across sibling enrollments
-  // and a snapshot of every child+package in the cart.
-  orderReference: text("orderReference"),
-  orderItems: jsonb("orderItems").$type<CartItem[]>(),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
 })
@@ -586,3 +570,28 @@ export const siteImages = pgTable("site_images", {
 })
 
 export type SiteImage = typeof siteImages.$inferSelect
+
+// ---- Session Attendance (coaching portal) ----
+
+/**
+ * session_attendance — one row per child per session date.
+ * status: 'present' | 'absent' | 'excused'
+ * A record exists once the coach marks the session (no record = not yet marked).
+ */
+export const sessionAttendance = pgTable("session_attendance", {
+  id: serial("id").primaryKey(),
+  coachId: integer("coachId")
+    .notNull()
+    .references(() => coaches.id, { onDelete: "cascade" }),
+  enrollmentId: integer("enrollmentId")
+    .notNull()
+    .references(() => enrollments.id, { onDelete: "cascade" }),
+  sessionDate: timestamp("sessionDate").notNull(),
+  // 'present' | 'absent' | 'excused'
+  status: text("status").notNull().default("present"),
+  note: text("note"),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+})
+
+export type SessionAttendance = typeof sessionAttendance.$inferSelect

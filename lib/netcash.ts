@@ -272,8 +272,7 @@ export async function buildNetcashPayment(input: BuildNetcashPaymentInput): Prom
       : null) ??
     "https://localhost:3000"
 
-  const serviceKey =
-    process.env.NETCASH_SERVICE_KEY ?? "46b5ffbf-9db3-45cd-a86e-993d4e827243"
+  const serviceKey = process.env.NETCASH_SERVICE_KEY ?? ""
 
   const nameParts = input.parentName.trim().split(" ")
   const firstName = nameParts[0] ?? input.parentName
