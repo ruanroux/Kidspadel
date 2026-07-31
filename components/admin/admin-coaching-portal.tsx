@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   XCircle,
   MinusCircle,
+  ExternalLink,
 } from "lucide-react"
 import type { CoachOption, CoachingEnrollment, AttendanceRecord } from "@/app/actions/coaching-portal"
 import {
@@ -788,7 +789,20 @@ export function AdminCoachingPortal({
                       {coach.name}
                     </p>
                     {isSelected && (
-                      <p className="text-xs text-lime font-semibold">Active</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-lime font-semibold">Active</p>
+                        <a
+                          href="/coach/login"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex items-center gap-0.5 text-xs text-white/50 hover:text-lime transition-colors"
+                          title="Open coach login page"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          Portal
+                        </a>
+                      </div>
                     )}
                   </div>
                 </div>
