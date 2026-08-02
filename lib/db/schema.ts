@@ -216,6 +216,11 @@ export const enrollments = pgTable("enrollments", {
   // FK to vouchers(id) ON DELETE SET NULL — expressed in DB but not in Drizzle
   // schema to avoid a circular reference (vouchers is declared after enrollments).
   pendingVoucherId: integer("pending_voucher_id"),
+  // Multi-child cart checkout: all sibling enrollments share the same orderReference.
+  // This is the p3 reference sent to Netcash and stored on the orders.netcashOrderId column.
+  orderReference: text("orderReference"),
+  // Cart items JSON — stored for receipt / admin view, not used for payment logic.
+  orderItems: jsonb("orderItems"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
 })

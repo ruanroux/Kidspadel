@@ -1,6 +1,7 @@
 import { MapPin, Phone, Clock } from "lucide-react"
 import { getPublishedClubs } from "@/app/actions/clubs"
 import { blobUrl, blobImage, blobSrcSet } from "@/lib/blob"
+import { ClubImage } from "@/components/club-image"
 
 export async function ClubsSection({ heading = true }: { heading?: boolean }) {
   const clubs = await getPublishedClubs()
@@ -24,52 +25,41 @@ export async function ClubsSection({ heading = true }: { heading?: boolean }) {
           <div className="space-y-4">
             {clubs.map((club) => {
               const features = Array.isArray(club.features) ? (club.features as string[]) : []
-              // Full https:// URLs (public blob or external) are used directly.
-              // Local public paths (starting with /) are used directly — no proxy.
+              // Full https:// or local public path URLs are used directly.
               // Only blob storage pathnames (no leading /) go through blobImage/blobUrl.
-              const isDirectUrl = club.imageUrl?.startsWith("https://") || club.imageUrl?.startsWith("http://") || club.imageUrl?.startsWith("/")
+              const isDirectUrl =
+                club.imageUrl?.startsWith("https://") ||
+                club.imageUrl?.startsWith("http://") ||
+                club.imageUrl?.startsWith("/")
               const imgSrc = isDirectUrl
                 ? club.imageUrl
                 : (blobImage(club.imageUrl, 640) ?? blobUrl(club.imageUrl) ?? club.image)
               const imgSrcSet = isDirectUrl ? undefined : blobSrcSet(club.imageUrl)
+
               return (
                 <article
                   key={club.id}
                   className="overflow-hidden rounded-2xl bg-white shadow-xl"
                 >
                   <div className="flex flex-col sm:grid sm:grid-cols-[200px_1fr]">
-                    {/* Club image */}
+                    {/* Club image — uses a client component to handle onError fallback */}
                     <div className="relative flex h-48 items-center justify-center overflow-hidden bg-navy/90 sm:h-auto">
                       {imgSrc ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={imgSrc}
-                          srcSet={imgSrcSet}
-                          sizes="(min-width: 640px) 200px, 100vw"
-                          alt={club.name}
-                          className="h-full w-full object-contain p-3"
-                          loading="lazy"
-                          decoding="async"
-                          onError={(e) => {
-                            const img = e.currentTarget
-                            img.style.display = "none"
-                            const fallback = img.nextElementSibling as HTMLElement | null
-                            if (fallback) fallback.style.display = "flex"
-                          }}
-                        />
-                      ) : null}
-                      <span
-                        className="text-center text-xl font-black text-lime px-4 items-center justify-center"
-                        style={{ display: imgSrc ? "none" : "flex" }}
-                      >
-                        {club.name}
-                      </span>
+                        <ClubImage src={imgSrc} srcSet={imgSrcSet} name={club.name} />
+                      ) : (
+                        <span className="flex items-center justify-center text-center text-xl font-black text-lime px-4">
+                          {club.name}
+                        </span>
+                      )}
                     </div>
+
                     <div className="p-4 sm:p-5">
                       <h3 className="text-xl font-black text-navy">{club.name}</h3>
                       <p className="font-bold text-lime text-sm">{club.location}</p>
                       {club.description && (
-                        <p className="mt-2 text-sm text-muted-foreground leading-relaxed">{club.description}</p>
+                        <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
+                          {club.description}
+                        </p>
                       )}
                       <ul className="mt-3 space-y-1.5 text-sm">
                         <li className="flex items-center gap-2 text-foreground/80">
@@ -88,7 +78,10 @@ export async function ClubsSection({ heading = true }: { heading?: boolean }) {
                       {features.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-1.5">
                           {features.map((f) => (
-                            <span key={f} className="rounded-full bg-lime/15 px-3 py-1 text-xs font-bold text-navy">
+                            <span
+                              key={f}
+                              className="rounded-full bg-lime/15 px-3 py-1 text-xs font-bold text-navy"
+                            >
                               {f}
                             </span>
                           ))}

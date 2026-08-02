@@ -396,3 +396,220 @@ export async function buildNetcashPaymentForEnrollment(input: {
 
   return { netcashUrl, formFields, orderId }
 }
+
+// ---------------------------------------------------------------------------
+// Multi-child cart checkout
+// ---------------------------------------------------------------------------
+
+export type CartItem = {
+  child: { firstName: string; lastName: string; dob: string }
+  packageId: number
+  packageName: string
+  packagePrice: number      // per-child price in Rands
+  packagePeriod: string     // 'monthly' | 'once-off'
+  clubId: number | null
+  clubName: string
+  schoolId: number | null
+  schoolName: string | null
+  slotWeekday: number | null
+  slotHour: number | null
+  ageGroup: string | null
+  discountPercent?: number
+  voucherId?: number | null
+}
+
+type CartPrefs = {
+  prefEmail: boolean
+  prefWhatsapp: boolean
+  prefSessionReminders: boolean
+  prefAnnouncements: boolean
+  prefEvents: boolean
+  prefHolidayClinics: boolean
+}
+
+/**
+ * createCartEnrollments
+ *
+ * Creates one enrollment row per cart item (per child), then inserts a single
+ * `orders` row for the total cart amount.  All enrollment rows share the same
+ * `orderReference` so the Netcash ITN webhook can activate all siblings when
+ * a single payment confirmation arrives.
+ *
+ * Returns the shared orderReference and totalAmount (Rands) to pass on to
+ * the Netcash payment form.
+ */
+export async function createCartEnrollments(input: {
+  parent: { firstName: string; lastName: string; email: string; mobile: string }
+  cartItems: CartItem[]
+  prefs: CartPrefs
+  emergencyContactName: string
+  emergencyContactPhone: string
+  agreedTerms: boolean
+  consentMedia: boolean
+  signatureData: string | null
+  signedName: string
+  referralCode: string | null
+  voucherId: number | null
+  discountPercent: number | undefined
+}): Promise<{ orderReference: string; totalAmount: number; enrollmentIds: number[] }> {
+  const userId = await getUserId()
+  const signedAt = new Date()
+
+  // Cart-level shared reference — used as Netcash p3 and stored on each enrollment row
+  const orderReference = generateReference()
+
+  const parentName = `${input.parent.firstName} ${input.parent.lastName}`.trim()
+
+  // Compute total with discount
+  const subtotal = input.cartItems.reduce((sum, item) => sum + item.packagePrice, 0)
+  const disc = input.discountPercent ?? 0
+  const totalAmount = disc > 0 ? subtotal * (1 - disc / 100) : subtotal
+
+  const isOnceOff = input.cartItems.every((item) => item.packagePeriod === "once-off")
+
+  // Create one enrollment per cart item
+  const enrollmentIds: number[] = []
+
+  for (const item of input.cartItems) {
+    const childFullName = `${item.child.firstName} ${item.child.lastName}`.trim()
+    const childDob = item.child.dob
+    const childAge = childDob
+      ? Math.floor((Date.now() - new Date(childDob).getTime()) / (1000 * 60 * 60 * 24 * 365.25))
+      : 0
+
+    // Auto-assign coach from club (best-effort)
+    let resolvedCoachId: number | null = null
+    let resolvedCoachName: string | null = null
+    if (item.clubId) {
+      const autoCoach = await lookupClubCoach(item.clubId)
+      if (autoCoach) {
+        resolvedCoachId = autoCoach.coachId
+        resolvedCoachName = autoCoach.coachName
+      }
+    }
+
+    const [inserted] = await db
+      .insert(enrollments)
+      .values({
+        userId,
+        referenceNumber: generateReference(), // unique per enrollment
+        orderReference,                        // shared cart ref
+        orderItems: input.cartItems,           // full cart stored for reference
+        parentName,
+        parentEmail: input.parent.email,
+        parentMobile: input.parent.mobile,
+        childName: childFullName,
+        childDob,
+        childAge,
+        packageName: item.packageName,
+        club: item.clubName,
+        clubId: item.clubId ?? undefined,
+        schoolId: item.schoolId ?? undefined,
+        schoolName: item.schoolName ?? undefined,
+        slotWeekday: item.slotWeekday ?? undefined,
+        slotHour: item.slotHour != null ? String(item.slotHour) : undefined,
+        slotAgeGroup: item.ageGroup ?? undefined,
+        emergencyContactName: input.emergencyContactName,
+        emergencyContactPhone: input.emergencyContactPhone,
+        agreedTerms: input.agreedTerms,
+        consentMedia: input.consentMedia,
+        signatureData: input.signatureData ?? undefined,
+        signedName: input.signedName,
+        signedAt,
+        prefEmail: input.prefs.prefEmail,
+        prefWhatsapp: input.prefs.prefWhatsapp,
+        prefSessionReminders: input.prefs.prefSessionReminders,
+        prefAnnouncements: input.prefs.prefAnnouncements,
+        prefEvents: input.prefs.prefEvents,
+        prefHolidayClinics: input.prefs.prefHolidayClinics,
+        paymentType: isOnceOff ? "once-off" : "monthly",
+        paymentStatus: "pending",
+        status: "pending",
+        accountStatus: "active",
+        onboardingComplete: false,
+        coachId: resolvedCoachId ?? undefined,
+        coachName: resolvedCoachName ?? undefined,
+        pendingVoucherId: input.voucherId ?? undefined,
+      })
+      .returning({ id: enrollments.id })
+
+    if (inserted?.id) {
+      enrollmentIds.push(inserted.id)
+
+      // Record referral (best-effort)
+      if (input.referralCode) {
+        try { await recordReferralOnEnrollment(input.referralCode, inserted.id) } catch {}
+      }
+    }
+  }
+
+  // Insert one order row for the entire cart
+  const firstEnrollmentId = enrollmentIds[0]
+  if (firstEnrollmentId == null) {
+    throw new Error("No enrollment rows created for cart")
+  }
+
+  await db
+    .insert(orders)
+    .values({
+      enrollmentId: firstEnrollmentId,
+      userId,
+      packageType: isOnceOff ? "once-off" : "monthly",
+      amount: Math.round(totalAmount * 100), // cents
+      status: "awaiting_payment",
+      netcashOrderId: orderReference,        // the p3 we'll send to Netcash
+    })
+
+  // Best-effort: send welcome email for first child only (to avoid spam for multi-child)
+  try {
+    const firstItem = input.cartItems[0]
+    if (firstItem) {
+      const slotLabel =
+        firstItem.slotWeekday != null && firstItem.slotHour != null
+          ? formatSlot(firstItem.slotWeekday, firstItem.slotHour)
+          : "To be confirmed"
+
+      await sendWelcomeEmail({
+        to: input.parent.email,
+        parentName,
+        childName: `${firstItem.child.firstName} ${firstItem.child.lastName}`.trim(),
+        packageName: firstItem.packageName,
+        packagePrice: firstItem.packagePrice,
+        clubName: firstItem.clubName,
+        slotLabel,
+        referenceNumber: orderReference,
+        contractPdf: null,
+      })
+    }
+  } catch (err) {
+    console.log("[v0] Cart welcome email failed:", err)
+  }
+
+  // Best-effort: admin notification
+  try {
+    const firstItem = input.cartItems[0]
+    if (firstItem) {
+      const slotLabel =
+        firstItem.slotWeekday != null && firstItem.slotHour != null
+          ? formatSlot(firstItem.slotWeekday, firstItem.slotHour)
+          : "To be confirmed"
+      await sendAdminNotificationEmail({
+        parentName,
+        parentEmail: input.parent.email,
+        parentMobile: input.parent.mobile,
+        childName: input.cartItems.map((c) => `${c.child.firstName} ${c.child.lastName}`).join(", "),
+        childAge: 0,
+        packageName: firstItem.packageName + (input.cartItems.length > 1 ? ` (${input.cartItems.length} children)` : ""),
+        packagePrice: totalAmount,
+        clubName: firstItem.clubName,
+        slotLabel,
+        referenceNumber: orderReference,
+      })
+    }
+  } catch (err) {
+    console.log("[v0] Cart admin notification failed:", err)
+  }
+
+  revalidatePath("/dashboard")
+  return { orderReference, totalAmount, enrollmentIds }
+}

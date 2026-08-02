@@ -29,7 +29,7 @@ import {
   paymentEvents,
   webhookLogs,
 } from "@/lib/db/schema"
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import {
   parseNetcashItn,
   amountMatchesExpected,
@@ -288,6 +288,32 @@ export async function POST(req: NextRequest) {
           extra1,
         },
       })
+
+      // Activate sibling enrollments for cart checkouts (multi-child).
+      // All cart enrollment rows share the same orderReference column.
+      if (enrollmentRow.orderReference) {
+        try {
+          const siblings = await db
+            .select({ id: enrollments.id })
+            .from(enrollments)
+            .where(and(eq(enrollments.orderReference, enrollmentRow.orderReference)))
+          for (const sibling of siblings) {
+            if (sibling.id === enrollmentRow.id) continue
+            await db
+              .update(enrollments)
+              .set({
+                paymentStatus: "paid",
+                status: "active",
+                onboardingComplete: true,
+                payfastPaymentId: requestTrace,
+                updatedAt: now,
+              })
+              .where(eq(enrollments.id, sibling.id))
+          }
+        } catch (siblingErr) {
+          console.error("[netcash-itn] sibling activation error:", siblingErr)
+        }
+      }
 
       // Complete any pending referral — marks it "complete", issues the referrer
       // their voucher, and stamps pendingDiscountPercent on the referrer's enrollment.
