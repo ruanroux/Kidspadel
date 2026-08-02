@@ -3,7 +3,7 @@
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { enrollments, user, coachClubs, coaches } from "@/lib/db/schema"
-import { and, asc, desc, eq } from "drizzle-orm"
+import { and, asc, desc, eq, inArray } from "drizzle-orm"
 import { headers } from "next/headers"
 import { revalidatePath } from "next/cache"
 import { put } from "@vercel/blob"
@@ -335,21 +335,54 @@ export async function buildNetcashPaymentForEnrollment(input: {
   packagePrice: number
   paymentType: "once-off" | "monthly"
 }) {
-  // Create an order record so we can track payment state
-  const [orderRow] = await db
-    .insert(orders)
-    .values({
-      enrollmentId: input.enrollmentId,
-      userId: (await (async () => {
-        const rows = await db.select({ userId: enrollments.userId }).from(enrollments).where(eq(enrollments.id, input.enrollmentId)).limit(1)
-        return rows[0]?.userId ?? ""
-      })()),
-      packageType: input.paymentType,
-      amount: Math.round(input.packagePrice * 100), // store cents
-      status: "awaiting_payment",
-      netcashOrderId: input.referenceNumber,
-    })
-    .returning({ id: orders.id })
+  // Resolve the userId from the enrollment record
+  const enrollmentRows = await db
+    .select({ userId: enrollments.userId })
+    .from(enrollments)
+    .where(eq(enrollments.id, input.enrollmentId))
+    .limit(1)
+  const userId = enrollmentRows[0]?.userId ?? ""
+
+  // Upsert: reuse an existing pending/awaiting_payment order for this enrollment
+  // to prevent duplicate order rows when the parent clicks "Pay" more than once.
+  const existingOrderRows = await db
+    .select()
+    .from(orders)
+    .where(
+      and(
+        eq(orders.enrollmentId, input.enrollmentId),
+        inArray(orders.status, ["pending", "awaiting_payment"]),
+      ),
+    )
+    .limit(1)
+
+  let orderId: number | undefined = existingOrderRows[0]?.id
+
+  if (orderId) {
+    // Reset the existing order so it is ready for a fresh payment attempt
+    await db
+      .update(orders)
+      .set({
+        status: "awaiting_payment",
+        netcashOrderId: input.referenceNumber,
+        failureReason: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+  } else {
+    const [orderRow] = await db
+      .insert(orders)
+      .values({
+        enrollmentId: input.enrollmentId,
+        userId,
+        packageType: input.paymentType,
+        amount: Math.round(input.packagePrice * 100), // store in cents
+        status: "awaiting_payment",
+        netcashOrderId: input.referenceNumber,
+      })
+      .returning({ id: orders.id })
+    orderId = orderRow?.id
+  }
 
   const { netcashUrl, formFields } = await buildNetcashPayment({
     referenceNumber: input.referenceNumber,
@@ -361,5 +394,5 @@ export async function buildNetcashPaymentForEnrollment(input: {
     paymentType: input.paymentType,
   })
 
-  return { netcashUrl, formFields, orderId: orderRow?.id }
+  return { netcashUrl, formFields, orderId }
 }

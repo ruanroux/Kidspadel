@@ -109,6 +109,7 @@ export function OnboardingWizard({ clubs, packages, schools }: { clubs: Club[]; 
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [reference, setReference] = useState<string | null>(null)
+  const [netcashUnavailable, setNetcashUnavailable] = useState(false)
   const selectedClub = clubs.find((c) => c.id === clubId) ?? null
   const selectedSchool = schools.find((s) => s.id === schoolId) ?? null
 
@@ -138,7 +139,13 @@ export function OnboardingWizard({ clubs, packages, schools }: { clubs: Club[]; 
   async function handleSubmit() {
     if (!selectedPackage) return
     setError(null)
+    setNetcashUnavailable(false)
     setSubmitting(true)
+
+    // Track whether we have successfully triggered a Netcash redirect.
+    // If true, do NOT reset setSubmitting(false) — the page is leaving.
+    let redirectingToNetcash = false
+
     try {
       // 1. Create the parent account (Better Auth, auto sign-in).
       //    If the account already exists (e.g. a previous attempt created the
@@ -164,13 +171,11 @@ export function OnboardingWizard({ clubs, packages, schools }: { clubs: Club[]; 
           if (signInError) {
             // Password is wrong for the existing account — surface a helpful message.
             setError("An account with this email already exists. If you registered before, please sign in from the dashboard instead.")
-            setSubmitting(false)
             return
           }
           // Sign-in succeeded — continue to enrollment creation below.
         } else {
           setError(signUpError.message ?? "Could not create your account.")
-          setSubmitting(false)
           return
         }
       }
@@ -215,37 +220,70 @@ export function OnboardingWizard({ clubs, packages, schools }: { clubs: Club[]; 
       }
       const referenceNumber = refs.join(", ")
 
-      // Both once-off and monthly redirect to Netcash Pay Now
+      // 3. Build the Netcash Pay Now payment request via the dedicated API route.
+      //    Using fetch() to /api/netcash/pay instead of a Server Action avoids
+      //    any proxy or middleware that may silently intercept Server Action POSTs
+      //    (which target /_next/action-... URLs) and return a non-redirect response.
       const firstRef = refs[0] ?? referenceNumber
       const firstEnrollmentId = enrollmentIds[0] ?? 0
-      const { netcashUrl, formFields } = await buildNetcashPaymentForEnrollment({
-        referenceNumber: firstRef,
-        enrollmentId: firstEnrollmentId,
-        parentName: `${parent.firstName} ${parent.lastName}`.trim(),
-        parentEmail: parent.email,
-        packageName: selectedPackage.name,
-        packagePrice: selectedPackage.price * childCount,
-        paymentType: isOnceOff ? "once-off" : "monthly",
+
+      const payResponse = await fetch("/api/netcash/pay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          referenceNumber: firstRef,
+          enrollmentId: firstEnrollmentId,
+          parentName: `${parent.firstName} ${parent.lastName}`.trim(),
+          parentEmail: parent.email,
+          packageName: selectedPackage.name,
+          packagePrice: selectedPackage.price * childCount,
+          paymentType: isOnceOff ? "once-off" : "monthly",
+        }),
       })
 
-      // Auto-submit a hidden form to POST to Netcash Pay Now
+      if (!payResponse.ok) {
+        const body = await payResponse.json().catch(() => ({}))
+        const msg: string = (body as { error?: string })?.error ?? `Payment gateway error (${payResponse.status})`
+        console.log("[v0] /api/netcash/pay error:", msg)
+        setNetcashUnavailable(true)
+        return
+      }
+
+      const { netcashUrl, formFields } = await payResponse.json() as { netcashUrl: string; formFields: Record<string, string> }
+
+      if (!netcashUrl || !formFields) {
+        setNetcashUnavailable(true)
+        return
+      }
+
+      // 4. Auto-submit a hidden form to POST directly to Netcash Pay Now.
+      //    Set redirectingToNetcash = true BEFORE calling form.submit() so that
+      //    the finally block does not reset the spinner while the page is leaving.
+      redirectingToNetcash = true
       const form = document.createElement("form")
       form.method = "POST"
       form.action = netcashUrl
+      form.style.display = "none"
       Object.entries(formFields).forEach(([key, value]) => {
         const inp = document.createElement("input")
         inp.type = "hidden"
         inp.name = key
-        inp.value = value
+        inp.value = String(value)
         form.appendChild(inp)
       })
       document.body.appendChild(form)
       form.submit()
-      // Don't call setSubmitting(false) — the page is navigating away
+      // Do NOT call setSubmitting(false) here — browser is navigating away.
     } catch (err) {
+      console.log("[v0] handleSubmit error:", err)
       setError(err instanceof Error ? err.message : "Something went wrong. Please try again.")
     } finally {
-      setSubmitting(false)
+      // Only reset the spinner when we did NOT trigger a Netcash redirect.
+      // Resetting state while the browser is navigating causes the form to
+      // flash back briefly, making it look like the redirect failed.
+      if (!redirectingToNetcash) {
+        setSubmitting(false)
+      }
     }
   }
 
@@ -778,6 +816,13 @@ export function OnboardingWizard({ clubs, packages, schools }: { clubs: Club[]; 
                 <SignaturePad value={signatureData} onChange={setSignatureData} />
               </div>
             </div>
+
+            {netcashUnavailable && (
+              <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="alert">
+                <p className="font-semibold">Your enrolment has been saved.</p>
+                <p className="mt-1">We could not connect to NetCash at this moment. Please try again in a few minutes — your information will not be lost.</p>
+              </div>
+            )}
 
             {error && (
               <p className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive" role="alert">
