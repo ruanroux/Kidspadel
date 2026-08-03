@@ -387,8 +387,15 @@ function PackageForm({
     const k = slotKey(clubId, ageGroup, weekday, hour)
     setCustomSlots((prev) => {
       const next = { ...prev }
-      if (k in next) delete next[k]
-      else next[k] = 10
+      if (k in next) {
+        delete next[k]
+      } else {
+        // School packages: enforce one slot per week — clear all others first
+        if (isSchool) {
+          for (const existingKey of Object.keys(next)) delete next[existingKey as SlotKey]
+        }
+        next[k] = 10
+      }
       return next
     })
   }
@@ -428,11 +435,10 @@ function PackageForm({
       description,
       popular,
       published,
-      // School packages use school IDs, not club IDs; clear clubs to avoid confusion
-      slotType: isSchool ? "standard" : slotType,
+      slotType,
       isSchool,
       sortOrder: Number(sortOrder),
-      customSlots: isSchool || slotType !== "custom" ? [] : customSlotList,
+      customSlots: slotType !== "custom" ? [] : customSlotList,
       clubIds: isSchool ? [] : selectedClubIds,
       schoolIds: isSchool ? selectedSchoolIds : [],
     })
@@ -550,7 +556,7 @@ function PackageForm({
         />
       </Field>
 
-      {/* School package toggle — controls all sections below */}
+      {/* School package toggle */}
       <div className={`flex items-center gap-3 rounded-md border px-4 py-3 ${isSchool ? "border-lime bg-lime/10" : "border-border bg-card"}`}>
         <input
           type="checkbox"
@@ -563,44 +569,47 @@ function PackageForm({
           <p className="text-sm font-semibold text-navy">School package</p>
           <p className="text-xs text-muted-foreground">
             {isSchool
-              ? "This package is for schools only — club and slot options are hidden."
+              ? "This package is for schools — one coaching slot per week. Slot and coach settings apply."
               : "Tick this if the package is for schools, not clubs."}
           </p>
         </label>
       </div>
 
-      {/* Slot type toggle — hidden for school packages */}
-      {!isSchool && (
-        <Field label="Booking slot type">
-          <div className="mt-2 flex gap-3">
-            <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-4 py-2 has-[:checked]:border-lime has-[:checked]:bg-lime/10">
-              <input
-                type="radio"
-                name="slotType"
-                value="standard"
-                checked={slotType === "standard"}
-                onChange={() => setSlotType("standard")}
-                className="accent-lime"
-              />
-              <span className="text-sm font-medium text-navy">Standard (club availability)</span>
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-4 py-2 has-[:checked]:border-lime has-[:checked]:bg-lime/10">
-              <input
-                type="radio"
-                name="slotType"
-                value="custom"
-                checked={slotType === "custom"}
-                onChange={() => setSlotType("custom")}
-                className="accent-lime"
-              />
-              <span className="text-sm font-medium text-navy">Custom (specific days &amp; times)</span>
-            </label>
-          </div>
-        </Field>
-      )}
+      {/* Slot type toggle — shown for all packages */}
+      <Field label="Booking slot type">
+        <div className="mt-2 flex gap-3">
+          <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-4 py-2 has-[:checked]:border-lime has-[:checked]:bg-lime/10">
+            <input
+              type="radio"
+              name="slotType"
+              value="standard"
+              checked={slotType === "standard"}
+              onChange={() => setSlotType("standard")}
+              className="accent-lime"
+            />
+            <span className="text-sm font-medium text-navy">Standard (school availability)</span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-4 py-2 has-[:checked]:border-lime has-[:checked]:bg-lime/10">
+            <input
+              type="radio"
+              name="slotType"
+              value="custom"
+              checked={slotType === "custom"}
+              onChange={() => setSlotType("custom")}
+              className="accent-lime"
+            />
+            <span className="text-sm font-medium text-navy">Custom (specific days &amp; times)</span>
+          </label>
+        </div>
+        {isSchool && slotType === "custom" && (
+          <p className="mt-2 text-xs text-amber-700 font-semibold">
+            School packages allow one slot per week. Only one day &amp; time can be active at a time.
+          </p>
+        )}
+      </Field>
 
-      {/* Custom slots — tabbed by club, then by age group — hidden for school packages */}
-      {!isSchool && slotType === "custom" && (
+      {/* Custom slots — tabbed by club, then by age group */}
+      {slotType === "custom" && (
         <div className="rounded-lg border border-border bg-muted/30 p-4">
           <p className="mb-1 text-sm font-semibold text-navy">Set available slots per venue per age group</p>
           <p className="mb-4 text-xs text-muted-foreground">
