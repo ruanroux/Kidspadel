@@ -18,6 +18,7 @@ import {
   XCircle,
   MinusCircle,
   ExternalLink,
+  ArrowLeftRight,
 } from "lucide-react"
 import type { CoachOption, CoachingEnrollment, AttendanceRecord } from "@/app/actions/coaching-portal"
 import {
@@ -27,6 +28,7 @@ import {
   markAttendance,
   correctAttendance,
   deleteAttendance,
+  reassignEnrollment,
 } from "@/app/actions/coaching-portal"
 
 // ---------------------------------------------------------------------------
@@ -60,10 +62,10 @@ function getWeekMonday(offset: number): Date {
   return mon
 }
 
-/** Generate Mon–Fri dates for a given week offset. */
+/** Generate Mon–Sun dates for a given week offset. */
 function getWeekDays(offset: number): Date[] {
   const mon = getWeekMonday(offset)
-  return Array.from({ length: 5 }, (_, i) => {
+  return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(mon)
     d.setDate(mon.getDate() + i)
     return d
@@ -72,11 +74,11 @@ function getWeekDays(offset: number): Date[] {
 
 function formatWeekLabel(offset: number): string {
   const mon = getWeekMonday(offset)
-  const fri = new Date(mon)
-  fri.setDate(mon.getDate() + 4)
+  const sun = new Date(mon)
+  sun.setDate(mon.getDate() + 6)
   const fmt = (d: Date) =>
     d.toLocaleDateString("en-ZA", { day: "numeric", month: "short" })
-  return `${fmt(mon)} – ${fmt(fri)}, ${fri.getFullYear()}`
+  return `${fmt(mon)} – ${fmt(sun)}, ${sun.getFullYear()}`
 }
 
 function formatDateFull(d: Date): string {
@@ -602,7 +604,7 @@ export function AdminCoachingPortal({
   )
   const [weekOffset, setWeekOffset] = useState(0)
   const [filterClubId, setFilterClubId] = useState<number | null>(null)
-  const [view, setView] = useState<"calendar" | "corrections">("calendar")
+  const [view, setView] = useState<"calendar" | "corrections" | "conflicts">("calendar")
 
   const [enrollments, setEnrollments] = useState<CoachingEnrollment[]>(initialEnrollments)
   const [attendance, setAttendance] = useState<AttendanceRecord[]>(initialAttendance)
@@ -686,11 +688,14 @@ export function AdminCoachingPortal({
             daySlots.get(key)!.enrollments.push(enr)
           }
           if (enr.slotWeekday2 === weekdayNum && enr.slotHour2 !== null) {
-            const key = `${enr.clubId ?? "null"}-${enr.slotHour2}-s2`
+            const key = `${enr.clubId ?? "null"}-${enr.slotHour2}`
             if (!daySlots.has(key)) {
               daySlots.set(key, { weekday: weekdayNum, hour: enr.slotHour2, club: enr.club, clubId: enr.clubId, enrollments: [] })
             }
-            daySlots.get(key)!.enrollments.push(enr)
+            const slot2 = daySlots.get(key)!
+            if (!slot2.enrollments.some((x) => x.enrollmentId === enr.enrollmentId)) {
+              slot2.enrollments.push(enr)
+            }
           }
         }
       }
@@ -746,6 +751,17 @@ export function AdminCoachingPortal({
           >
             <RotateCcw className="h-4 w-4" />
             Correct Errors
+          </button>
+          <button
+            onClick={() => setView("conflicts")}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-semibold transition-colors ${
+              view === "conflicts"
+                ? "bg-white text-navy shadow-sm"
+                : "text-muted-foreground hover:text-navy"
+            }`}
+          >
+            <ArrowLeftRight className="h-4 w-4" />
+            Reassign
           </button>
         </div>
       </div>
@@ -842,6 +858,22 @@ export function AdminCoachingPortal({
           enrollments={enrollments}
           history={history}
           onHistoryChange={setHistory}
+        />
+      ) : view === "conflicts" ? (
+        <ConflictPanel
+          allCoaches={initialCoaches}
+          enrollments={enrollments}
+          selectedCoachId={selectedCoachId}
+          onReassign={(enrollmentId, newCoachId) => {
+            // Update local state immediately
+            setEnrollments((prev) =>
+              prev.map((e) =>
+                e.enrollmentId === enrollmentId
+                  ? { ...e, assignedCoachId: newCoachId }
+                  : e
+              )
+            )
+          }}
         />
       ) : (
         <>
@@ -1001,6 +1033,180 @@ export function AdminCoachingPortal({
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ConflictPanel — reassign students between coaches at shared clubs
+// ---------------------------------------------------------------------------
+
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+function formatSlotLabel(weekday: number | null, hour: number | null): string {
+  if (weekday == null || hour == null) return "TBC"
+  const hh = Math.floor(hour)
+  const mm = Math.round((hour - hh) * 60)
+  return `${WEEKDAY_LABELS[weekday]} ${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`
+}
+
+function ConflictPanel({
+  allCoaches,
+  enrollments,
+  selectedCoachId,
+  onReassign,
+}: {
+  allCoaches: CoachOption[]
+  enrollments: CoachingEnrollment[]
+  selectedCoachId: number | null
+  onReassign: (enrollmentId: number, newCoachId: number) => void
+}) {
+  const [pending, startTransition] = useTransition()
+  const [reassigning, setReassigning] = useState<number | null>(null)
+  const [selectedNew, setSelectedNew] = useState<Record<number, number>>({})
+  const [flash, setFlash] = useState<Record<number, "ok" | "error">>({})
+
+  function handleReassign(enrollmentId: number) {
+    const newCoachId = selectedNew[enrollmentId]
+    if (!newCoachId) return
+    setReassigning(enrollmentId)
+    startTransition(async () => {
+      const res = await reassignEnrollment(enrollmentId, newCoachId)
+      setReassigning(null)
+      if (res.ok) {
+        onReassign(enrollmentId, newCoachId)
+        setFlash((f) => ({ ...f, [enrollmentId]: "ok" }))
+        setTimeout(() => setFlash((f) => { const n = { ...f }; delete n[enrollmentId]; return n }), 2000)
+      } else {
+        setFlash((f) => ({ ...f, [enrollmentId]: "error" }))
+        setTimeout(() => setFlash((f) => { const n = { ...f }; delete n[enrollmentId]; return n }), 3000)
+      }
+    })
+  }
+
+  // Group enrollments by club+slot — show all students visible to selected coach
+  const groups = useMemo(() => {
+    type Group = {
+      key: string
+      club: string
+      clubId: number | null
+      slotLabel: string
+      entries: { enrollment: CoachingEnrollment; slotNum: 1 | 2 }[]
+    }
+    const map = new Map<string, Group>()
+
+    for (const enr of enrollments) {
+      // Slot 1
+      if (enr.slotWeekday != null && enr.slotHour != null) {
+        const key = `${enr.clubId}-${enr.slotWeekday}-${enr.slotHour}`
+        if (!map.has(key)) map.set(key, { key, club: enr.club, clubId: enr.clubId, slotLabel: formatSlotLabel(enr.slotWeekday, enr.slotHour), entries: [] })
+        map.get(key)!.entries.push({ enrollment: enr, slotNum: 1 })
+      }
+      // Slot 2
+      if (enr.slotWeekday2 != null && enr.slotHour2 != null) {
+        const key = `${enr.clubId}-${enr.slotWeekday2}-${enr.slotHour2}`
+        if (!map.has(key)) map.set(key, { key, club: enr.club, clubId: enr.clubId, slotLabel: formatSlotLabel(enr.slotWeekday2, enr.slotHour2), entries: [] })
+        const g = map.get(key)!
+        if (!g.entries.some((x) => x.enrollment.enrollmentId === enr.enrollmentId)) {
+          g.entries.push({ enrollment: enr, slotNum: 2 })
+        }
+      }
+    }
+
+    return [...map.values()].sort((a, b) => a.slotLabel.localeCompare(b.slotLabel))
+  }, [enrollments])
+
+  if (groups.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-border py-16 text-center">
+        <ArrowLeftRight className="mx-auto h-8 w-8 text-muted-foreground/30" />
+        <p className="mt-3 text-sm text-muted-foreground">No enrollments to display. Select a coach first.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+        <p className="text-sm text-amber-800">
+          <strong>Reassign students</strong> — all enrollments at this coach&apos;s clubs are shown.
+          Use the dropdown to move a student to a different coach at the same time slot.
+          This is useful when two coaches share a club and you need to split a session.
+        </p>
+      </div>
+
+      {groups.map((group) => (
+        <div key={group.key} className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+          {/* Group header */}
+          <div className="flex items-center gap-3 bg-navy px-4 py-3">
+            <Clock className="h-3.5 w-3.5 text-lime" />
+            <span className="text-sm font-bold text-white">{group.slotLabel}</span>
+            <span className="text-white/30">|</span>
+            <Building2 className="h-3.5 w-3.5 text-white/50" />
+            <span className="text-sm font-semibold text-white/80">{group.club}</span>
+            <span className="ml-auto rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold text-white">
+              {group.entries.length} student{group.entries.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+
+          {/* Rows */}
+          <div className="divide-y divide-border/60">
+            {group.entries.map(({ enrollment: enr }) => {
+              const assignedCoach = allCoaches.find((c) => c.id === enr.assignedCoachId)
+              const isDone = flash[enr.enrollmentId] === "ok"
+              const isErr = flash[enr.enrollmentId] === "error"
+              const isMoving = reassigning === enr.enrollmentId
+
+              return (
+                <div key={enr.enrollmentId} className={`flex items-center gap-3 px-4 py-3 transition-colors ${isDone ? "bg-lime/5" : ""}`}>
+                  {/* Avatar */}
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-navy/10 text-xs font-bold text-navy">
+                    {enr.childName.charAt(0).toUpperCase()}
+                  </div>
+                  {/* Info */}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-navy">{enr.childName}</p>
+                    <p className="text-xs text-muted-foreground">{enr.parentName} · {enr.packageName}</p>
+                  </div>
+                  {/* Current coach badge */}
+                  <div className="shrink-0 text-right">
+                    <span className="rounded-full bg-navy/10 px-2.5 py-1 text-xs font-semibold text-navy">
+                      {assignedCoach?.name ?? "Unassigned"}
+                    </span>
+                  </div>
+                  {/* Reassign control */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <select
+                      className="rounded-md border border-border bg-background px-2 py-1.5 text-xs font-medium text-navy focus:outline-none focus:ring-1 focus:ring-navy"
+                      value={selectedNew[enr.enrollmentId] ?? ""}
+                      onChange={(e) =>
+                        setSelectedNew((s) => ({ ...s, [enr.enrollmentId]: Number(e.target.value) }))
+                      }
+                    >
+                      <option value="">Move to...</option>
+                      {allCoaches
+                        .filter((c) => c.id !== enr.assignedCoachId)
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                    </select>
+                    <button
+                      disabled={!selectedNew[enr.enrollmentId] || isMoving || pending}
+                      onClick={() => handleReassign(enr.enrollmentId)}
+                      className="flex items-center gap-1 rounded-md bg-navy px-3 py-1.5 text-xs font-semibold text-white hover:bg-navy/80 disabled:opacity-40 transition-colors"
+                    >
+                      <ArrowLeftRight className="h-3 w-3" />
+                      {isMoving ? "Moving..." : "Move"}
+                    </button>
+                    {isDone && <Check className="h-4 w-4 text-lime shrink-0" />}
+                    {isErr && <X className="h-4 w-4 text-red-500 shrink-0" />}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

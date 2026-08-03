@@ -29,6 +29,9 @@ export type AdminSignup = {
   // numeric column returns string from Drizzle; parse with parseFloat before display
   slotHour: string | null
   slotLabel: string | null
+  slotWeekday2: number | null
+  slotHour2: string | null
+  slotLabel2: string | null
   emergencyContactName: string | null
   emergencyContactPhone: string | null
   debitAccountHolder: string | null
@@ -62,6 +65,8 @@ export type UpdateSignupInput = {
   coachId?: number | null
   slotWeekday: number | null
   slotHour: number | null
+  slotWeekday2: number | null
+  slotHour2: number | null
   emergencyContactName: string
   emergencyContactPhone: string
   status: string
@@ -88,6 +93,9 @@ export async function getAllSignups(): Promise<AdminSignup[]> {
     slotWeekday: r.slotWeekday ?? null,
     slotHour: r.slotHour ?? null,
     slotLabel: r.slotWeekday != null && r.slotHour != null ? formatSlot(r.slotWeekday, parseFloat(String(r.slotHour))) : null,
+    slotWeekday2: r.slotWeekday2 ?? null,
+    slotHour2: r.slotHour2 ?? null,
+    slotLabel2: r.slotWeekday2 != null && r.slotHour2 != null ? formatSlot(r.slotWeekday2, parseFloat(String(r.slotHour2))) : null,
     emergencyContactName: r.emergencyContactName ?? null,
     emergencyContactPhone: r.emergencyContactPhone ?? null,
     debitAccountHolder: r.debitAccountHolder ?? null,
@@ -131,6 +139,8 @@ export async function updateSignup(
         ...(input.coachId !== undefined && { coachId: input.coachId }),
         slotWeekday: input.slotWeekday ?? undefined,
         slotHour: input.slotHour != null ? String(input.slotHour) : undefined,
+        slotWeekday2: input.slotWeekday2 ?? null,
+        slotHour2: input.slotHour2 != null ? String(input.slotHour2) : null,
         emergencyContactName: input.emergencyContactName.trim() || undefined,
         emergencyContactPhone: input.emergencyContactPhone.trim() || undefined,
         status: input.status,
@@ -283,6 +293,34 @@ export async function deleteSignup(id: number): Promise<{ ok: boolean; error?: s
   }
 }
 
+/**
+ * Permanently delete an inactive enrollment.
+ * Only allowed when the enrollment status is "inactive" — this is enforced
+ * server-side so the UI restriction cannot be bypassed.
+ * The deletion cascades to any associated orders rows.
+ */
+export async function permanentlyDeleteSignup(id: number): Promise<{ ok: boolean; error?: string }> {
+  await requireAdmin()
+  try {
+    // Safety guard: only inactive enrollments may be permanently deleted
+    const rows = await db
+      .select({ id: enrollments.id, status: enrollments.status })
+      .from(enrollments)
+      .where(eq(enrollments.id, id))
+      .limit(1)
+    const row = rows[0]
+    if (!row) return { ok: false, error: "Enrollment not found" }
+    if (row.status !== "inactive") {
+      return { ok: false, error: "Only inactive enrollments can be permanently deleted. Deactivate it first." }
+    }
+    await db.delete(enrollments).where(eq(enrollments.id, id))
+    revalidatePath("/admin")
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Delete failed" }
+  }
+}
+
 export type UserSearchResult = {
   id: string
   name: string
@@ -320,6 +358,8 @@ export type CreateSignupInput = {
   coachId?: number | null
   slotWeekday: number | null
   slotHour: number | null
+  slotWeekday2: number | null
+  slotHour2: number | null
   emergencyContactName: string
   emergencyContactPhone: string
   status: string
@@ -385,6 +425,8 @@ export async function createSignup(input: CreateSignupInput): Promise<{ ok: bool
         coachName: resolvedCoachName,
         slotWeekday: input.slotWeekday ?? undefined,
         slotHour: input.slotHour != null ? String(input.slotHour) : undefined,
+        slotWeekday2: input.slotWeekday2 ?? null,
+        slotHour2: input.slotHour2 != null ? String(input.slotHour2) : null,
         emergencyContactName: input.emergencyContactName.trim() || undefined,
         emergencyContactPhone: input.emergencyContactPhone.trim() || undefined,
         status: input.status,

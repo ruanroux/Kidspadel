@@ -36,7 +36,7 @@ function getWeekMonday(offset: number): Date {
 
 function getWeekDays(offset: number): Date[] {
   const mon = getWeekMonday(offset)
-  return Array.from({ length: 5 }, (_, i) => {
+  return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(mon)
     d.setDate(mon.getDate() + i)
     return d
@@ -45,9 +45,9 @@ function getWeekDays(offset: number): Date[] {
 
 function formatWeekLabel(offset: number): string {
   const mon = getWeekMonday(offset)
-  const fri = new Date(mon); fri.setDate(mon.getDate() + 4)
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
   const fmt = (d: Date) => d.toLocaleDateString("en-ZA", { day: "numeric", month: "short" })
-  return `${fmt(mon)} – ${fmt(fri)}, ${fri.getFullYear()}`
+  return `${fmt(mon)} – ${fmt(sun)}, ${sun.getFullYear()}`
 }
 
 function formatHour(h: number): string {
@@ -316,12 +316,19 @@ export function CoachPortalView({
         if (e.slotWeekday === wd && e.slotHour != null) {
           const k = `${e.slotHour}:${e.clubId ?? e.club}`
           if (!slotMap.has(k)) slotMap.set(k, { hour: e.slotHour, club: e.club, clubId: e.clubId, enrollments: [] })
-          slotMap.get(k)!.enrollments.push(e)
+          const slot = slotMap.get(k)!
+          if (!slot.enrollments.some((x) => x.enrollmentId === e.enrollmentId)) {
+            slot.enrollments.push(e)
+          }
         }
         if (e.slotWeekday2 === wd && e.slotHour2 != null) {
-          const k = `${e.slotHour2}:${e.clubId ?? e.club}:2`
+          const k = `${e.slotHour2}:${e.clubId ?? e.club}`
           if (!slotMap.has(k)) slotMap.set(k, { hour: e.slotHour2, club: e.club, clubId: e.clubId, enrollments: [] })
-          slotMap.get(k)!.enrollments.push(e)
+          const slot = slotMap.get(k)!
+          // Only add if this student isn't already in this slot (via slot 1)
+          if (!slot.enrollments.some((x) => x.enrollmentId === e.enrollmentId)) {
+            slot.enrollments.push(e)
+          }
         }
       }
       return { date: d, slots: Array.from(slotMap.values()).sort((a, b) => a.hour - b.hour) }

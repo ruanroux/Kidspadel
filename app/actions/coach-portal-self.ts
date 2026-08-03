@@ -6,7 +6,7 @@
  */
 
 import { db } from "@/lib/db"
-import { sessionAttendance, enrollments, coachClubs, clubs } from "@/lib/db/schema"
+import { sessionAttendance, enrollments, coachClubs } from "@/lib/db/schema"
 import { eq, and, gte, lte, asc, inArray } from "drizzle-orm"
 import { revalidatePath } from "next/cache"
 import { requireCoachSession } from "@/lib/coach-auth"
@@ -42,12 +42,21 @@ function weekBounds(offset: number): { start: Date; end: Date } {
 
 export async function selfGetEnrollments(): Promise<CoachingEnrollment[]> {
   const { coachId } = await requireCoachSession()
+
+  // Resolve which clubs this coach covers
+  const ccRows = await db
+    .select({ clubId: coachClubs.clubId })
+    .from(coachClubs)
+    .where(eq(coachClubs.coachId, coachId))
+  const clubIds = ccRows.map((r) => r.clubId)
+  if (clubIds.length === 0) return []
+
   const rows = await db
     .select()
     .from(enrollments)
     .where(
       and(
-        eq(enrollments.coachId, coachId),
+        inArray(enrollments.clubId, clubIds),
         inArray(enrollments.status, ["active", "pending"]),
       )
     )
@@ -65,6 +74,7 @@ export async function selfGetEnrollments(): Promise<CoachingEnrollment[]> {
     slotHour: r.slotHour != null ? Number(r.slotHour) : null,
     slotWeekday2: r.slotWeekday2 ?? null,
     slotHour2: r.slotHour2 != null ? Number(r.slotHour2) : null,
+    assignedCoachId: r.coachId ?? null,
   }))
 }
 

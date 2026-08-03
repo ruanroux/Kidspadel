@@ -581,8 +581,8 @@ export async function createCartEnrollments(input: {
         contractPdf: null,
       })
     }
-  } catch (err) {
-    console.log("[v0] Cart welcome email failed:", err)
+  } catch {
+    // best-effort — failure must not block enrollment
   }
 
   // Best-effort: admin notification
@@ -606,8 +606,8 @@ export async function createCartEnrollments(input: {
         referenceNumber: orderReference,
       })
     }
-  } catch (err) {
-    console.log("[v0] Cart admin notification failed:", err)
+  } catch {
+    // best-effort — failure must not block enrollment
   }
 
   revalidatePath("/dashboard")

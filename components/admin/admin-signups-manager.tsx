@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import {
   FileText, Mail, RefreshCw, Check, X, Pencil,
   ChevronDown, ChevronUp, Plus, Filter, Search, Link2, UserPlus, Eye,
-  CreditCard, Building2, Landmark, Tag, PowerOff, RotateCcw,
+  CreditCard, Building2, Landmark, Tag, PowerOff, RotateCcw, Trash2,
 } from "lucide-react"
 import {
   type AdminSignup,
@@ -19,6 +19,7 @@ import {
   reactivateSignup,
   createSignup,
   searchUsers,
+  permanentlyDeleteSignup,
 } from "@/app/actions/admin-signups"
 import { markReferralDiscountApplied } from "@/app/actions/referrals"
 import type { CoachRow } from "@/app/actions/coaches"
@@ -91,6 +92,7 @@ export function AdminSignupsManager({
   const [showAddModal, setShowAddModal] = useState(false)
   const [confirmDeactivateId, setConfirmDeactivateId] = useState<number | null>(null)
   const [confirmReactivateId, setConfirmReactivateId] = useState<number | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
 
   // Filters
   const [filterEnrollmentState, setFilterEnrollmentState] = useState<"active" | "inactive" | "all">("active")
@@ -204,6 +206,20 @@ export function AdminSignupsManager({
     })
   }
 
+  function handlePermanentDelete(id: number) {
+    startTransition(async () => {
+      const res = await permanentlyDeleteSignup(id)
+      if (res.ok) {
+        setSignups((prev) => prev.filter((s) => s.id !== id))
+        setConfirmDeleteId(null)
+        router.refresh()
+      } else {
+        flash(id, false, res.error ?? "Delete failed")
+        setConfirmDeleteId(null)
+      }
+    })
+  }
+
   function handleCreate(input: CreateSignupInput) {
     startTransition(async () => {
       const res = await createSignup(input)
@@ -227,6 +243,12 @@ export function AdminSignupsManager({
           slotLabel:
             input.slotWeekday != null && input.slotHour != null
               ? formatSlot(input.slotWeekday, input.slotHour)
+              : null,
+          slotWeekday2: input.slotWeekday2,
+          slotHour2: input.slotHour2 != null ? String(input.slotHour2) : null,
+          slotLabel2:
+            input.slotWeekday2 != null && input.slotHour2 != null
+              ? formatSlot(input.slotWeekday2, input.slotHour2)
               : null,
           emergencyContactName: input.emergencyContactName || null,
           emergencyContactPhone: input.emergencyContactPhone || null,
@@ -458,8 +480,17 @@ export function AdminSignupsManager({
                     </div>
                   </td>
                   {/* Slot — compact "Mon 13:30" */}
-                  <td className="whitespace-nowrap px-2 py-2 font-medium text-navy" title={s.slotLabel ?? undefined}>
-                    {compactSlot(s.slotLabel) ?? <span className="text-muted-foreground">TBC</span>}
+                  <td className="px-2 py-2 font-medium text-navy">
+                    <div className="flex flex-col gap-0.5">
+                      <span title={s.slotLabel ?? undefined}>
+                        {compactSlot(s.slotLabel) ?? <span className="text-muted-foreground">TBC</span>}
+                      </span>
+                      {s.slotLabel2 && (
+                        <span className="text-[10px] text-muted-foreground" title={s.slotLabel2}>
+                          {compactSlot(s.slotLabel2)}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   {/* Coach: small avatar + name */}
                   <td className="px-2 py-2">
@@ -543,9 +574,14 @@ export function AdminSignupsManager({
                           <PowerOff className="h-3.5 w-3.5" />
                         </IconBtn>
                       ) : (
-                        <IconBtn title="Reactivate" onClick={() => setConfirmReactivateId(s.id)} variant="success">
-                          <RotateCcw className="h-3.5 w-3.5" />
-                        </IconBtn>
+                        <>
+                          <IconBtn title="Reactivate" onClick={() => setConfirmReactivateId(s.id)} variant="success">
+                            <RotateCcw className="h-3.5 w-3.5" />
+                          </IconBtn>
+                          <IconBtn title="Delete permanently" onClick={() => setConfirmDeleteId(s.id)} variant="danger">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </IconBtn>
+                        </>
                       )}
                     </div>
                     {toast?.id === s.id && (
@@ -614,6 +650,18 @@ export function AdminSignupsManager({
           onConfirm={() => handleReactivate(confirmReactivateId)}
           onCancel={() => setConfirmReactivateId(null)}
           variant="success"
+        />
+      )}
+
+      {/* Permanent delete confirmation dialog */}
+      {confirmDeleteId != null && (
+        <ConfirmDialog
+          message="Permanently delete this enrolment? This action cannot be undone — all data including the parent record, child details, and payment history will be erased forever. Only inactive enrolments can be deleted."
+          confirmLabel="Yes, delete permanently"
+          pending={pending}
+          onConfirm={() => handlePermanentDelete(confirmDeleteId)}
+          onCancel={() => setConfirmDeleteId(null)}
+          variant="danger"
         />
       )}
     </div>
@@ -783,7 +831,8 @@ function ViewModal({
             <DetailSection title="Programme">
               <DetailRow label="Package" value={s.packageName} />
               <DetailRow label="Club" value={s.club || "—"} />
-              <DetailRow label="Time slot" value={s.slotLabel || "TBC"} />
+              <DetailRow label="Session 1" value={s.slotLabel || "TBC"} />
+              {s.slotLabel2 && <DetailRow label="Session 2" value={s.slotLabel2} />}
               <DetailRow label="Coach" value={s.coachName || "—"} />
             </DetailSection>
             {/* Payment */}
@@ -971,6 +1020,12 @@ function EditModal({
   const [slotHour, setSlotHour] = useState<string>(
     signup.slotHour != null ? String(signup.slotHour) : "",
   )
+  const [slotWeekday2, setSlotWeekday2] = useState<string>(
+    signup.slotWeekday2 != null ? String(signup.slotWeekday2) : "",
+  )
+  const [slotHour2, setSlotHour2] = useState<string>(
+    signup.slotHour2 != null ? String(signup.slotHour2) : "",
+  )
   const [emergencyName, setEmergencyName] = useState(signup.emergencyContactName ?? "")
   const [emergencyPhone, setEmergencyPhone] = useState(signup.emergencyContactPhone ?? "")
   const [status, setStatus] = useState(signup.status)
@@ -988,6 +1043,8 @@ function EditModal({
       packageName, club, clubId, coachName, coachId,
       slotWeekday: slotWeekday !== "" ? Number(slotWeekday) : null,
       slotHour: slotHour !== "" ? Number(slotHour) : null,
+      slotWeekday2: slotWeekday2 !== "" ? Number(slotWeekday2) : null,
+      slotHour2: slotHour2 !== "" ? Number(slotHour2) : null,
       emergencyContactName: emergencyName,
       emergencyContactPhone: emergencyPhone,
       status,
@@ -1016,6 +1073,8 @@ function EditModal({
             coachName={coachName} setCoachName={setCoachName} setCoachId={setCoachId}
             slotWeekday={slotWeekday} setSlotWeekday={setSlotWeekday}
             slotHour={slotHour} setSlotHour={setSlotHour}
+            slotWeekday2={slotWeekday2} setSlotWeekday2={setSlotWeekday2}
+            slotHour2={slotHour2} setSlotHour2={setSlotHour2}
             childAge={childAge}
             allPackages={allPackages} allClubs={allClubs} allCoaches={allCoaches}
           />
@@ -1107,6 +1166,8 @@ function AddModal({
   const [coachId, setCoachId] = useState<number | null>(null)
   const [slotWeekday, setSlotWeekday] = useState("")
   const [slotHour, setSlotHour] = useState("")
+  const [slotWeekday2, setSlotWeekday2] = useState("")
+  const [slotHour2, setSlotHour2] = useState("")
   const [emergencyName, setEmergencyName] = useState("")
   const [emergencyPhone, setEmergencyPhone] = useState("")
   const [status, setStatus] = useState("pending")
@@ -1164,6 +1225,8 @@ function AddModal({
       packageName, club, clubId, coachName, coachId,
       slotWeekday: slotWeekday !== "" ? Number(slotWeekday) : null,
       slotHour: slotHour !== "" ? Number(slotHour) : null,
+      slotWeekday2: slotWeekday2 !== "" ? Number(slotWeekday2) : null,
+      slotHour2: slotHour2 !== "" ? Number(slotHour2) : null,
       emergencyContactName: emergencyName,
       emergencyContactPhone: emergencyPhone,
       status,
@@ -1286,6 +1349,8 @@ function AddModal({
             coachName={coachName} setCoachName={setCoachName} setCoachId={setCoachId}
             slotWeekday={slotWeekday} setSlotWeekday={setSlotWeekday}
             slotHour={slotHour} setSlotHour={setSlotHour}
+            slotWeekday2={slotWeekday2} setSlotWeekday2={setSlotWeekday2}
+            slotHour2={slotHour2} setSlotHour2={setSlotHour2}
             childAge={childAge}
             allPackages={allPackages} allClubs={allClubs} allCoaches={allCoaches}
           />
@@ -1411,6 +1476,8 @@ function ProgrammeFields({
   coachName, setCoachName, setCoachId,
   slotWeekday, setSlotWeekday,
   slotHour, setSlotHour,
+  slotWeekday2, setSlotWeekday2,
+  slotHour2, setSlotHour2,
   childAge,
   allPackages, allClubs, allCoaches,
 }: {
@@ -1421,6 +1488,8 @@ function ProgrammeFields({
   setCoachId?: (v: number | null) => void
   slotWeekday: string; setSlotWeekday: (v: string) => void
   slotHour: string; setSlotHour: (v: string) => void
+  slotWeekday2: string; setSlotWeekday2: (v: string) => void
+  slotHour2: string; setSlotHour2: (v: string) => void
   childAge?: string | number | null
   allPackages: PublicPackage[]
   allClubs: Club[]
@@ -1429,6 +1498,8 @@ function ProgrammeFields({
   // Resolve whether the selected package uses custom slots
   const selectedPkg = allPackages.find((p) => p.name === packageName) ?? null
   const isCustom = selectedPkg?.slotType === "custom"
+  // Advanced package = two sessions per week on different days
+  const isAdvanced = /advanced/i.test(packageName)
 
   // Resolve the clubId from the selected club name
   const selectedClub = allClubs.find((c) => c.name === club) ?? null
@@ -1499,44 +1570,89 @@ function ProgrammeFields({
 
       {isCustom && selectedPkg ? (
         /* Custom package — show the same slot picker customers see, filtered to this club */
-        <div>
-          <p className="mb-2 text-xs font-semibold text-navy">Session slot</p>
-          <p className="mb-3 text-xs text-muted-foreground">
-            Only the slots configured for this package{clubId ? " at this venue" : ""} are shown. Select one to assign it.
-          </p>
-          <PackageSlotPicker
-            packageId={selectedPkg.id}
-            packageName={selectedPkg.name}
-            ageGroup={ageGroup}
-            clubId={clubId}
-            selected={selectedSlot}
-            onSelect={handleSlotSelect}
-          />
-          {selectedSlot && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Selected: <span className="font-semibold text-navy">{formatSlot(selectedSlot.weekday, selectedSlot.hour)}</span>
-              {" · "}
-              <button type="button" onClick={() => { setSlotWeekday(""); setSlotHour("") }} className="text-destructive hover:underline">
-                Clear
-              </button>
-            </p>
+        <div className="space-y-4">
+          <div>
+            <p className="mb-2 text-xs font-semibold text-navy">Session 1{isAdvanced ? " (first coaching session)" : ""}</p>
+            {!isAdvanced && (
+              <p className="mb-3 text-xs text-muted-foreground">
+                Only the slots configured for this package{clubId ? " at this venue" : ""} are shown. Select one to assign it.
+              </p>
+            )}
+            <PackageSlotPicker
+              packageId={selectedPkg.id}
+              packageName={selectedPkg.name}
+              ageGroup={ageGroup}
+              clubId={clubId}
+              selected={selectedSlot}
+              onSelect={handleSlotSelect}
+            />
+            {selectedSlot && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Selected: <span className="font-semibold text-navy">{formatSlot(selectedSlot.weekday, selectedSlot.hour)}</span>
+                {" · "}
+                <button type="button" onClick={() => { setSlotWeekday(""); setSlotHour("") }} className="text-destructive hover:underline">
+                  Clear
+                </button>
+              </p>
+            )}
+          </div>
+
+          {isAdvanced && (
+            <div>
+              <p className="mb-2 text-xs font-semibold text-navy">Session 2 (second coaching session — different day)</p>
+              <PackageSlotPicker
+                packageId={selectedPkg.id}
+                packageName={selectedPkg.name}
+                ageGroup={ageGroup}
+                clubId={clubId}
+                selected={slotWeekday2 !== "" && slotHour2 !== "" ? { weekday: Number(slotWeekday2), hour: Number(slotHour2) } : null}
+                onSelect={(slot) => { setSlotWeekday2(String(slot.weekday)); setSlotHour2(String(slot.hour)) }}
+              />
+              {slotWeekday2 !== "" && slotHour2 !== "" && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Selected: <span className="font-semibold text-navy">{formatSlot(Number(slotWeekday2), Number(slotHour2))}</span>
+                  {" · "}
+                  <button type="button" onClick={() => { setSlotWeekday2(""); setSlotHour2("") }} className="text-destructive hover:underline">
+                    Clear
+                  </button>
+                </p>
+              )}
+            </div>
           )}
         </div>
       ) : (
         /* Standard package — free day + time selects */
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Session day">
-            <select value={slotWeekday} onChange={(e) => setSlotWeekday(e.target.value)} className={selectCls}>
-              <option value="">— not set —</option>
-              {WEEKDAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
-            </select>
-          </Field>
-          <Field label="Session time">
-            <select value={slotHour} onChange={(e) => setSlotHour(e.target.value)} className={selectCls}>
-              <option value="">— not set —</option>
-              {HOURS.map((h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
-            </select>
-          </Field>
+        <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label={isAdvanced ? "Session 1 — day" : "Session day"}>
+              <select value={slotWeekday} onChange={(e) => setSlotWeekday(e.target.value)} className={selectCls}>
+                <option value="">— not set —</option>
+                {WEEKDAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+              </select>
+            </Field>
+            <Field label={isAdvanced ? "Session 1 — time" : "Session time"}>
+              <select value={slotHour} onChange={(e) => setSlotHour(e.target.value)} className={selectCls}>
+                <option value="">— not set —</option>
+                {HOURS.map((h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
+              </select>
+            </Field>
+          </div>
+          {isAdvanced && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Session 2 — day">
+                <select value={slotWeekday2} onChange={(e) => setSlotWeekday2(e.target.value)} className={selectCls}>
+                  <option value="">— not set —</option>
+                  {WEEKDAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                </select>
+              </Field>
+              <Field label="Session 2 — time">
+                <select value={slotHour2} onChange={(e) => setSlotHour2(e.target.value)} className={selectCls}>
+                  <option value="">— not set —</option>
+                  {HOURS.map((h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
+                </select>
+              </Field>
+            </div>
+          )}
         </div>
       )}
     </fieldset>

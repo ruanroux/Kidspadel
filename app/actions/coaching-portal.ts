@@ -35,6 +35,8 @@ export type CoachingEnrollment = {
   // Slot 2 (advanced package)
   slotWeekday2: number | null
   slotHour2: number | null
+  // Which coach is formally assigned to this enrollment
+  assignedCoachId?: number | null
 }
 
 export type AttendanceRecord = {
@@ -95,10 +97,18 @@ export async function getCoachOptions(): Promise<CoachOption[]> {
     .orderBy(asc(coaches.sortOrder), asc(coaches.id))
   if (rows.length === 0) return []
 
-  // Club assignments per coach
+  // Only count published clubs toward the coach's club count
+  const publishedClubs = await db
+    .select({ id: clubs.id })
+    .from(clubs)
+    .where(eq(clubs.published, true))
+  const publishedClubIds = new Set(publishedClubs.map((c) => c.id))
+
+  // Club assignments per coach (published clubs only)
   const ccRows = await db.select().from(coachClubs)
   const clubMap = new Map<number, number[]>()
   for (const cc of ccRows) {
+    if (!publishedClubIds.has(cc.clubId)) continue
     if (!clubMap.has(cc.coachId)) clubMap.set(cc.coachId, [])
     clubMap.get(cc.coachId)!.push(cc.clubId)
   }
@@ -127,10 +137,20 @@ export async function getCoachOptions(): Promise<CoachOption[]> {
 }
 
 /**
- * Fetch enrollments for a coach.
- * Includes only active/pending enrollments with a slotWeekday assigned.
+ * Fetch enrollments visible to a coach.
+ * A coach sees ALL active/pending enrollments at ANY club they are assigned to,
+ * regardless of which coach is named on the enrollment. This supports shared clubs
+ * where multiple coaches cover the same venue.
  */
 export async function getCoachEnrollments(coachId: number): Promise<CoachingEnrollment[]> {
+  // Resolve which club IDs this coach covers
+  const ccRows = await db
+    .select({ clubId: coachClubs.clubId })
+    .from(coachClubs)
+    .where(eq(coachClubs.coachId, coachId))
+  const clubIds = ccRows.map((r) => r.clubId)
+  if (clubIds.length === 0) return []
+
   const rows = await db
     .select({
       id: enrollments.id,
@@ -144,11 +164,12 @@ export async function getCoachEnrollments(coachId: number): Promise<CoachingEnro
       slotHour: enrollments.slotHour,
       slotWeekday2: enrollments.slotWeekday2,
       slotHour2: enrollments.slotHour2,
+      coachId: enrollments.coachId,
     })
     .from(enrollments)
     .where(
       and(
-        eq(enrollments.coachId, coachId),
+        inArray(enrollments.clubId, clubIds),
         inArray(enrollments.status, ["active", "pending"])
       )
     )
@@ -166,7 +187,35 @@ export async function getCoachEnrollments(coachId: number): Promise<CoachingEnro
     slotHour: r.slotHour != null ? Number(r.slotHour) : null,
     slotWeekday2: r.slotWeekday2 ?? null,
     slotHour2: r.slotHour2 != null ? Number(r.slotHour2) : null,
+    assignedCoachId: r.coachId ?? null,
   }))
+}
+
+/**
+ * Reassign a single enrollment to a different coach.
+ * Used by the admin conflict-resolution panel.
+ */
+export async function reassignEnrollment(
+  enrollmentId: number,
+  newCoachId: number
+): Promise<{ ok: boolean; error?: string }> {
+  await requireAdmin()
+  try {
+    const coachRow = await db
+      .select({ name: coaches.name })
+      .from(coaches)
+      .where(eq(coaches.id, newCoachId))
+      .limit(1)
+    if (!coachRow.length) return { ok: false, error: "Coach not found" }
+    await db
+      .update(enrollments)
+      .set({ coachId: newCoachId, coachName: coachRow[0].name })
+      .where(eq(enrollments.id, enrollmentId))
+    revalidatePath("/admin")
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Reassign failed" }
+  }
 }
 
 /** Fetch attendance records for a coach within a date range (full week). */
@@ -310,8 +359,11 @@ export async function deleteAttendance(attendanceId: number): Promise<{ ok: bool
   }
 }
 
-/** Load all club names for display. */
+/** Load published club names for display. */
 export async function getClubNames(): Promise<Record<number, string>> {
-  const rows = await db.select({ id: clubs.id, name: clubs.name }).from(clubs)
+  const rows = await db
+    .select({ id: clubs.id, name: clubs.name })
+    .from(clubs)
+    .where(eq(clubs.published, true))
   return Object.fromEntries(rows.map((r) => [r.id, r.name]))
 }
