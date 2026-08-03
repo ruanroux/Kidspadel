@@ -409,19 +409,21 @@ export function AdminSignupsManager({
       <div className="mt-4 rounded-card border border-border bg-card shadow-sm">
         <table className="w-full table-fixed text-left text-xs">
           <colgroup>
-            <col style={{ width: "14%" }} />{/* Child */}
+            <col style={{ width: "5%" }} />{/* ID */}
+            <col style={{ width: "13%" }} />{/* Child */}
             <col style={{ width: "5%" }} />{/* Age */}
-            <col style={{ width: "12%" }} />{/* Parent */}
-            <col style={{ width: "10%" }} />{/* Package */}
+            <col style={{ width: "11%" }} />{/* Parent */}
+            <col style={{ width: "9%" }} />{/* Package */}
             <col style={{ width: "8%" }} />{/* Club */}
             <col style={{ width: "9%" }} />{/* Slot */}
             <col style={{ width: "8%" }} />{/* Coach */}
-            <col style={{ width: "8%" }} />{/* Status */}
-            <col style={{ width: "10%" }} />{/* Payment */}
+            <col style={{ width: "7%" }} />{/* Status */}
+            <col style={{ width: "9%" }} />{/* Payment */}
             <col style={{ width: "8%" }} />{/* Actions */}
           </colgroup>
           <thead className="border-b border-border bg-muted/40">
             <tr>
+              <th className="px-2 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">ID</th>
               <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Child</th>
               <th className="px-2 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Age</th>
               <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Parent</th>
@@ -442,6 +444,12 @@ export function AdminSignupsManager({
               const coachImg = coachData?.imageUrl ?? null
               return (
                 <tr key={s.id} className="hover:bg-muted/20 align-middle">
+                  {/* Enrollment ID */}
+                  <td className="px-2 py-2">
+                    <span className="inline-block rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] font-semibold text-muted-foreground">
+                      #{s.id}
+                    </span>
+                  </td>
                   {/* Child name */}
                   <td className="truncate px-3 py-2">
                     <span className="font-semibold text-navy">{s.childName}</span>
