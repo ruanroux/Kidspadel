@@ -121,8 +121,8 @@ export async function updateSignup(
   id: number,
   input: UpdateSignupInput,
 ): Promise<{ ok: boolean; error?: string }> {
-  await requireAdmin()
   try {
+    await requireAdmin()
     await db
       .update(enrollments)
       .set({
@@ -171,7 +171,7 @@ function priceFor(packageName: string): number {
 
 /** Regenerate the contract PDF for a signup and store it in Blob; returns the blob pathname. */
 export async function regenerateContract(id: number): Promise<{ pathname: string }> {
-  await requireAdmin()
+  await requireAdmin() // throws intentionally — not a { ok } return type
   const r = await loadEnrollment(id)
   const slotLabel =
     r.slotWeekday != null && r.slotHour != null ? formatSlot(r.slotWeekday, parseFloat(String(r.slotHour))) : "To be confirmed"
@@ -207,7 +207,12 @@ export async function regenerateContract(id: number): Promise<{ pathname: string
 }
 
 /** Resend the welcome email (with the contract) for an existing signup. */
-export async function resendWelcome(id: number): Promise<{ ok: boolean; error?: string }> {  await requireAdmin()
+export async function resendWelcome(id: number): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await requireAdmin()
+  } catch {
+    return { ok: false, error: "Not authorized" }
+  }
   const r = await loadEnrollment(id)
   const slotLabel =
     r.slotWeekday != null && r.slotHour != null ? formatSlot(r.slotWeekday, parseFloat(String(r.slotHour))) : "To be confirmed"
@@ -256,8 +261,8 @@ export async function resendWelcome(id: number): Promise<{ ok: boolean; error?: 
  * Only the status changes.
  */
 export async function deactivateSignup(id: number): Promise<{ ok: boolean; error?: string }> {
-  await requireAdmin()
   try {
+    await requireAdmin()
     await db.update(enrollments).set({ status: "inactive", updatedAt: new Date() }).where(eq(enrollments.id, id))
     revalidatePath("/admin")
     return { ok: true }
@@ -271,8 +276,8 @@ export async function deactivateSignup(id: number): Promise<{ ok: boolean; error
  * Restores the enrollment to the coaching portal and all active views.
  */
 export async function reactivateSignup(id: number): Promise<{ ok: boolean; error?: string }> {
-  await requireAdmin()
   try {
+    await requireAdmin()
     await db.update(enrollments).set({ status: "active", updatedAt: new Date() }).where(eq(enrollments.id, id))
     revalidatePath("/admin")
     return { ok: true }
@@ -283,8 +288,8 @@ export async function reactivateSignup(id: number): Promise<{ ok: boolean; error
 
 /** @deprecated Use deactivateSignup instead — production records must never be permanently deleted. */
 export async function deleteSignup(id: number): Promise<{ ok: boolean; error?: string }> {
-  await requireAdmin()
   try {
+    await requireAdmin()
     await db.delete(enrollments).where(eq(enrollments.id, id))
     revalidatePath("/admin")
     return { ok: true }
@@ -300,8 +305,8 @@ export async function deleteSignup(id: number): Promise<{ ok: boolean; error?: s
  * The deletion cascades to any associated orders rows.
  */
 export async function permanentlyDeleteSignup(id: number): Promise<{ ok: boolean; error?: string }> {
-  await requireAdmin()
   try {
+    await requireAdmin()
     // Safety guard: only inactive enrollments may be permanently deleted
     const rows = await db
       .select({ id: enrollments.id, status: enrollments.status })
@@ -389,8 +394,8 @@ async function resolveCoachForClub(clubId: number | null | undefined): Promise<{
 
 /** Manually create a sign-up from the admin dashboard. */
 export async function createSignup(input: CreateSignupInput): Promise<{ ok: boolean; id?: number; referenceNumber?: string; error?: string }> {
-  await requireAdmin()
   try {
+    await requireAdmin()
     const referenceNumber = `NGP-${nanoid(8).toUpperCase()}`
     // Use the linked user's ID so the parent sees this on their dashboard,
     // or fall back to "admin" for unlinked / new-account enrollments.
