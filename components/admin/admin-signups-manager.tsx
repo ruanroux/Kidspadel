@@ -22,6 +22,12 @@ import {
   permanentlyDeleteSignup,
 } from "@/app/actions/admin-signups"
 import { markReferralDiscountApplied } from "@/app/actions/referrals"
+import {
+  getMonthsForEnrollment,
+  updateMonthStatus,
+  MONTH_NAMES,
+  type SubscriptionMonthRow,
+} from "@/app/actions/subscription-months"
 import type { CoachRow } from "@/app/actions/coaches"
 import type { PublicPackage } from "@/app/actions/packages"
 import type { Club } from "@/lib/db/schema"
@@ -870,6 +876,9 @@ function ViewModal({
               <DetailRow label="Created" value={s.createdAt ? new Date(s.createdAt).toLocaleDateString("en-ZA") : "—"} />
             </DetailSection>
           </div>
+
+          {/* Inline billing ledger */}
+          <InlineBillingPanel enrollmentId={s.id} />
         </div>
       </div>
     </div>
@@ -890,6 +899,99 @@ function DetailRow({ label, value }: { label: string; value: string }) {
     <div className="flex gap-2 text-sm">
       <dt className="w-32 shrink-0 text-muted-foreground">{label}</dt>
       <dd className="font-medium text-navy">{value}</dd>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Inline billing panel (used inside ViewModal)
+// ---------------------------------------------------------------------------
+
+function InlineBillingPanel({ enrollmentId }: { enrollmentId: number }) {
+  const [months, setMonths] = useState<SubscriptionMonthRow[] | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [updating, setUpdating] = useState<number | null>(null)
+  const [pending, startTransition] = useTransition()
+
+  useEffect(() => {
+    getMonthsForEnrollment(enrollmentId)
+      .then(setMonths)
+      .finally(() => setLoading(false))
+  }, [enrollmentId])
+
+  function handleChange(id: number, status: "outstanding" | "paid" | "waived" | "deferred") {
+    setUpdating(id)
+    startTransition(async () => {
+      const res = await updateMonthStatus(id, status)
+      setUpdating(null)
+      if (res.ok) {
+        setMonths((prev) =>
+          prev
+            ? prev.map((m) =>
+                m.id === id ? { ...m, status, paidAt: status === "paid" ? new Date() : null } : m,
+              )
+            : prev,
+        )
+      }
+    })
+  }
+
+  return (
+    <div className="border-t border-border pt-5">
+      <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+        Monthly Billing — 2026
+      </h3>
+      {loading && (
+        <p className="text-xs text-muted-foreground">Loading billing months…</p>
+      )}
+      {!loading && (!months || months.length === 0) && (
+        <p className="rounded-lg border border-dashed border-border py-4 text-center text-xs text-muted-foreground">
+          No billing months generated yet. Visit the Billing tab and click &ldquo;Sync Months&rdquo;.
+        </p>
+      )}
+      {months && months.length > 0 && (
+        <div className="grid grid-cols-5 gap-2">
+          {months.map((m) => (
+            <div
+              key={m.id}
+              className={`rounded-lg border p-2 text-center transition-colors ${
+                m.status === "paid" ? "border-lime/40 bg-lime/5" :
+                m.status === "outstanding" ? "border-amber-200 bg-amber-50" :
+                m.status === "waived" ? "border-sky-200 bg-sky-50" :
+                "border-border bg-card"
+              }`}
+            >
+              <p className="text-xs font-bold text-navy">{MONTH_NAMES[m.month - 1]}</p>
+              <p className="text-[10px] text-muted-foreground">
+                R {(m.amountCents / 100).toFixed(0)}
+              </p>
+              <div className="mt-1">
+                <span className={`inline-block rounded-full px-1.5 py-0.5 text-[9px] font-semibold capitalize ${
+                  m.status === "paid" ? "bg-lime/20 text-navy" :
+                  m.status === "outstanding" ? "bg-amber-100 text-amber-800" :
+                  "bg-muted text-muted-foreground"
+                }`}>
+                  {m.status}
+                </span>
+              </div>
+              <select
+                disabled={updating === m.id || pending}
+                value={m.status}
+                onChange={(e) =>
+                  handleChange(m.id, e.target.value as "outstanding" | "paid" | "waived" | "deferred")
+                }
+                className="mt-1 w-full rounded border border-border bg-background px-1 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-navy/30 disabled:opacity-50"
+              >
+                <option value="outstanding">Outstanding</option>
+                <option value="paid">Paid</option>
+                <option value="partial">Partial</option>
+                <option value="waived">Waived</option>
+                <option value="deferred">Deferred</option>
+              </select>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

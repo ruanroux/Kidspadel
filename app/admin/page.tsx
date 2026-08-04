@@ -12,6 +12,7 @@ import { getAllPayments, getAllOrders, getAllSubscriptions, getAllWebhookLogs } 
 import { getAllMoments } from "@/app/actions/moments"
 import { getAllSiteImages } from "@/app/actions/site-images"
 import { AdminTabs } from "@/components/admin/admin-tabs"
+import { getBillingLedger, getOutstandingReport, getRevenueReport, backfillAllEnrollments } from "@/app/actions/subscription-months"
 
 export const metadata = {
   title: "Admin Dashboard | Next Gen Padel",
@@ -22,7 +23,10 @@ export default async function AdminPage() {
     redirect("/admin/login")
   }
 
-  const [clubs, schools, packages, signups, contacts, coaches, coachOptions, referrals, vouchers, campaigns, allPayments, allOrders, allSubscriptions, webhookLogs, moments, siteImages] =
+  // Auto-backfill billing months for all active enrollments (idempotent)
+  await backfillAllEnrollments().catch(() => {})
+
+  const [clubs, schools, packages, signups, contacts, coaches, coachOptions, referrals, vouchers, campaigns, allPayments, allOrders, allSubscriptions, webhookLogs, moments, siteImages, billingLedger, billingOutstanding, billingRevenue] =
     await Promise.all([
       getAllClubsAdmin(),
       getAllSchoolsAdmin(),
@@ -40,6 +44,9 @@ export default async function AdminPage() {
       getAllWebhookLogs().catch(() => []),
       getAllMoments().catch(() => []),
       getAllSiteImages().catch(() => []),
+      getBillingLedger().catch(() => []),
+      getOutstandingReport().catch(() => []),
+      getRevenueReport().catch(() => []),
     ])
 
   // Load initial coaching portal data for the first coach
@@ -93,6 +100,9 @@ export default async function AdminPage() {
           webhookLogs={webhookLogs}
           moments={moments}
           siteImages={siteImages}
+          billingLedger={billingLedger}
+          billingOutstanding={billingOutstanding}
+          billingRevenue={billingRevenue}
         />
       </section>
     </main>

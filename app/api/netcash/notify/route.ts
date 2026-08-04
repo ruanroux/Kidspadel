@@ -36,6 +36,7 @@ import {
   type NetcashItnPayload,
 } from "@/lib/netcash"
 import { completeReferralForEnrollment } from "@/app/actions/referrals"
+import { autoMarkMonthPaidFromWebhook } from "@/app/actions/subscription-months"
 import { revalidatePath } from "next/cache"
 
 // ---------------------------------------------------------------------------
@@ -313,6 +314,18 @@ export async function POST(req: NextRequest) {
         } catch (siblingErr) {
           console.error("[netcash-itn] sibling activation error:", siblingErr)
         }
+      }
+
+      // Auto-mark the corresponding subscription month as paid
+      // Best-effort: never fail the webhook over billing ledger errors
+      try {
+        await autoMarkMonthPaidFromWebhook(
+          enrollmentRow.id,
+          Math.round(postedAmountRands * 100),
+          requestTrace || reference,
+        )
+      } catch (billingErr) {
+        console.error("[netcash-itn] billing ledger update failed:", billingErr)
       }
 
       // Complete any pending referral — marks it "complete", issues the referrer
