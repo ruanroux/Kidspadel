@@ -494,6 +494,43 @@ export const subscriptions = pgTable("subscriptions", {
 export type Subscription = typeof subscriptions.$inferSelect
 
 /**
+ * subscription_months — one row per enrollment per billing month.
+ * Tracks the payment status of every monthly period for a given enrollment.
+ * Idempotently generated: generating the same year+month twice is a no-op
+ * (unique constraint on enrollmentId+year+month).
+ */
+export const subscriptionMonths = pgTable(
+  "subscription_months",
+  {
+    id: serial("id").primaryKey(),
+    enrollmentId: integer("enrollmentId")
+      .notNull()
+      .references(() => enrollments.id, { onDelete: "cascade" }),
+    // Calendar year, e.g. 2026
+    year: integer("year").notNull(),
+    // Calendar month 1–12
+    month: integer("month").notNull(),
+    // Amount due in cents (copied from package price at generation time)
+    amountCents: integer("amountCents").notNull().default(0),
+    // 'outstanding' | 'paid' | 'partial' | 'waived' | 'deferred'
+    status: text("status").notNull().default("outstanding"),
+    // Netcash/payment reference that settled this month (if any)
+    paymentReference: text("paymentReference"),
+    // Notes added by admin
+    notes: text("notes"),
+    // When the status was last changed
+    paidAt: timestamp("paidAt"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqueMonth: unique("subscription_months_unique").on(t.enrollmentId, t.year, t.month),
+  }),
+)
+
+export type SubscriptionMonth = typeof subscriptionMonths.$inferSelect
+
+/**
  * payment_events — immutable audit log; one row per significant event.
  */
 export const paymentEvents = pgTable("payment_events", {

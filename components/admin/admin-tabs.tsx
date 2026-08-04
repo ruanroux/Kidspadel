@@ -23,8 +23,10 @@ import { AdminMomentsManager } from "@/components/admin/admin-moments-manager"
 import type { PublicMoment } from "@/app/actions/moments"
 import { AdminSiteImagesManager } from "@/components/admin/admin-site-images-manager"
 import type { SiteImageRow } from "@/app/actions/site-images"
+import { AdminBillingManager } from "@/components/admin/admin-billing-manager"
+import type { BillingLedgerEntry, OutstandingEntry, RevenueMonthSummary } from "@/app/actions/subscription-months"
 
-type Tab = "clubs" | "schools" | "packages" | "signups" | "contact" | "coaches" | "coaching-portal" | "referrals" | "payments" | "impersonate" | "moments" | "site-images"
+type Tab = "clubs" | "schools" | "packages" | "signups" | "contact" | "coaches" | "coaching-portal" | "referrals" | "payments" | "billing" | "impersonate" | "moments" | "site-images"
 
 export function AdminTabs({
   clubs,
@@ -46,6 +48,9 @@ export function AdminTabs({
   webhookLogs,
   moments,
   siteImages,
+  billingLedger,
+  billingOutstanding,
+  billingRevenue,
 }: {
   clubs: Club[]
   schools: School[]
@@ -66,6 +71,9 @@ export function AdminTabs({
   webhookLogs: WebhookLog[]
   moments: PublicMoment[]
   siteImages: SiteImageRow[]
+  billingLedger: BillingLedgerEntry[]
+  billingOutstanding: OutstandingEntry[]
+  billingRevenue: RevenueMonthSummary[]
 }) {
   const [tab, setTab] = useState<Tab>("clubs")
 
@@ -77,6 +85,7 @@ export function AdminTabs({
     { id: "coaches", label: "Coaches" },
     { id: "coaching-portal", label: "Coaching Portal" },
     { id: "payments", label: "Payments" },
+    { id: "billing", label: "Billing" },
     { id: "referrals", label: "Referrals & Vouchers" },
     { id: "contact", label: "Contact Details" },
     { id: "moments", label: "Next Gen Moments" },
@@ -122,6 +131,13 @@ export function AdminTabs({
             initialOrders={allOrders}
             initialSubscriptions={allSubscriptions}
             initialWebhookLogs={webhookLogs}
+          />
+        )}
+        {tab === "billing" && (
+          <AdminBillingManager
+            initialLedger={billingLedger}
+            initialOutstanding={billingOutstanding}
+            initialRevenue={billingRevenue}
           />
         )}
         {tab === "referrals" && <AdminReferralsManager referrals={referrals} vouchers={vouchers} campaigns={campaigns} />}
