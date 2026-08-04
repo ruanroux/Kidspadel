@@ -608,79 +608,30 @@ function PackageForm({
         )}
       </Field>
 
-      {/* Custom slots — tabbed by club, then by age group */}
+      {/* Custom slots — tabbed by club (or direct grid for school packages), then by age group */}
       {slotType === "custom" && (
         <div className="rounded-lg border border-border bg-muted/30 p-4">
-          <p className="mb-1 text-sm font-semibold text-navy">Set available slots per venue per age group</p>
-          <p className="mb-4 text-xs text-muted-foreground">
-            Select a venue tab, then toggle days &amp; times for each age group. Each venue has its own independent slot grid and capacity numbers. Only venues selected above appear here.
-          </p>
-
-          {selectedClubIds.length === 0 ? (
-            <p className="rounded-md border border-dashed border-border bg-card px-4 py-3 text-sm text-muted-foreground">
-              Select at least one venue above to configure per-venue slots.
-            </p>
+          {isSchool ? (
+            <>
+              <p className="mb-1 text-sm font-semibold text-navy">Set weekly coaching slot</p>
+              <p className="mb-4 text-xs text-muted-foreground">
+                Toggle one day &amp; time. School packages allow one slot per week — selecting a new slot automatically clears the previous one.
+              </p>
+            </>
           ) : (
             <>
-              {/* Club tab bar */}
-              <div className="mb-3 flex flex-wrap gap-1 rounded-lg border border-border bg-muted p-1">
-                {allClubs.filter((c) => selectedClubIds.includes(c.id)).map((club) => {
-                  const clubSlotCount = Object.keys(customSlots).filter((k) => k.startsWith(`${club.id}-`)).length
-                  const isActive = activeSlotClubId === club.id
-                  return (
-                    <button
-                      key={club.id}
-                      type="button"
-                      onClick={() => setActiveSlotClubId(club.id)}
-                      className={`flex-1 rounded-md px-3 py-2 text-xs font-bold transition-colors ${
-                        isActive
-                          ? "bg-navy text-navy-foreground shadow-sm"
-                          : "text-muted-foreground hover:text-navy"
-                      }`}
-                    >
-                      {club.name}
-                      {clubSlotCount > 0 && (
-                        <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-black ${
-                          isActive ? "bg-lime text-navy" : "bg-lime/30 text-navy"
-                        }`}>
-                          {clubSlotCount}
-                        </span>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
+              <p className="mb-1 text-sm font-semibold text-navy">Set available slots per venue per age group</p>
+              <p className="mb-4 text-xs text-muted-foreground">
+                Select a venue tab, then toggle days &amp; times for each age group. Each venue has its own independent slot grid and capacity numbers. Only venues selected above appear here.
+              </p>
+            </>
+          )}
 
-              {/* Age group tab bar */}
-              <div className="flex gap-1 rounded-lg border border-border bg-card p-1">
-                {AGE_GROUPS.map((ag) => {
-                  const count = Object.keys(customSlots).filter((k) => k.startsWith(`${activeSlotClubId}-${ag}-`)).length
-                  return (
-                    <button
-                      key={ag}
-                      type="button"
-                      onClick={() => setActiveAgeGroup(ag)}
-                      className={`flex-1 rounded-md py-2 text-xs font-bold transition-colors ${
-                        activeAgeGroup === ag
-                          ? "bg-lime text-lime-foreground shadow-sm"
-                          : "text-muted-foreground hover:text-navy"
-                      }`}
-                    >
-                      {AGE_GROUP_LABELS[ag]}
-                      {count > 0 && (
-                        <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-black ${
-                          activeAgeGroup === ag ? "bg-navy text-white" : "bg-lime/30 text-navy"
-                        }`}>
-                          {count}
-                        </span>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
-
-              {/* Slot grid for active club + age group */}
-              <div className="mt-3 overflow-x-auto rounded-md border border-border">
+          {/* School packages: direct grid using virtual clubId=0, no venue tab needed */}
+          {isSchool ? (
+            <>
+              {/* Slot grid — day x time, one selection at a time */}
+              <div className="overflow-x-auto rounded-md border border-border">
                 <table className="min-w-full text-xs">
                   <thead>
                     <tr className="border-b border-border bg-muted/50">
@@ -697,39 +648,20 @@ function PackageForm({
                           {formatHour(hour)} – {formatEndHour(hour)}
                         </td>
                         {WEEKDAYS.map((_, wd) => {
-                          const k = slotKey(activeSlotClubId, activeAgeGroup, wd, hour)
+                          const k = slotKey(0, activeAgeGroup, wd, hour)
                           const isOn = k in customSlots
-                          const cap = customSlots[k] ?? 10
                           return (
                             <td key={wd} className="px-1.5 py-1.5 text-center">
-                              {isOn ? (
-                                <div className="flex flex-col items-center gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleSlot(activeSlotClubId, activeAgeGroup, wd, hour)}
-                                    className="rounded bg-lime px-2 py-0.5 text-xs font-bold text-lime-foreground"
-                                  >
-                                    ON
-                                  </button>
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    max={99}
-                                    value={cap}
-                                    onChange={(e) => setCapacity(activeSlotClubId, activeAgeGroup, wd, hour, Number(e.target.value))}
-                                    aria-label={`Capacity for ${WEEKDAYS[wd]} ${formatHour(hour)} (${activeAgeGroup}) at club ${activeSlotClubId}`}
-                                    className="w-12 rounded border border-border bg-background px-1 py-0.5 text-center text-xs outline-none focus:border-lime"
-                                  />
-                                </div>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => toggleSlot(activeSlotClubId, activeAgeGroup, wd, hour)}
-                                  className="rounded border border-dashed border-border px-2 py-0.5 text-xs text-muted-foreground hover:border-lime hover:text-navy"
-                                >
-                                  +
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                onClick={() => toggleSlot(0, activeAgeGroup, wd, hour)}
+                                className={isOn
+                                  ? "rounded bg-lime px-2 py-0.5 text-xs font-bold text-lime-foreground"
+                                  : "rounded border border-dashed border-border px-2 py-0.5 text-xs text-muted-foreground hover:border-lime hover:text-navy"
+                                }
+                              >
+                                {isOn ? "ON" : "+"}
+                              </button>
                             </td>
                           )
                         })}
@@ -739,10 +671,144 @@ function PackageForm({
                 </table>
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                {activeCount} slot{activeCount !== 1 ? "s" : ""} for {AGE_GROUP_LABELS[activeAgeGroup]} at this venue
-                {" · "}
-                {totalCount} total across all venues &amp; age groups
+                {Object.keys(customSlots).length === 1
+                  ? `1 slot selected — ${
+                      Object.keys(customSlots).map((k) => {
+                        const [,, wd, h] = k.split("-")
+                        return `${WEEKDAYS[Number(wd)]} ${formatHour(Number(h))}`
+                      })[0]
+                    }`
+                  : "No slot selected yet — click a cell to choose the weekly coaching time."}
               </p>
+            </>
+          ) : (
+            /* Club packages: club tab bar + age group tabs + grid */
+            <>
+              {selectedClubIds.length === 0 ? (
+                <p className="rounded-md border border-dashed border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+                  Select at least one venue above to configure per-venue slots.
+                </p>
+              ) : (
+                <>
+                  {/* Club tab bar */}
+                  <div className="mb-3 flex flex-wrap gap-1 rounded-lg border border-border bg-muted p-1">
+                    {allClubs.filter((c) => selectedClubIds.includes(c.id)).map((club) => {
+                      const clubSlotCount = Object.keys(customSlots).filter((k) => k.startsWith(`${club.id}-`)).length
+                      const isActive = activeSlotClubId === club.id
+                      return (
+                        <button
+                          key={club.id}
+                          type="button"
+                          onClick={() => setActiveSlotClubId(club.id)}
+                          className={`flex-1 rounded-md px-3 py-2 text-xs font-bold transition-colors ${
+                            isActive ? "bg-navy text-navy-foreground shadow-sm" : "text-muted-foreground hover:text-navy"
+                          }`}
+                        >
+                          {club.name}
+                          {clubSlotCount > 0 && (
+                            <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-black ${
+                              isActive ? "bg-lime text-navy" : "bg-lime/30 text-navy"
+                            }`}>
+                              {clubSlotCount}
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  {/* Age group tab bar */}
+                  <div className="flex gap-1 rounded-lg border border-border bg-card p-1">
+                    {AGE_GROUPS.map((ag) => {
+                      const count = Object.keys(customSlots).filter((k) => k.startsWith(`${activeSlotClubId}-${ag}-`)).length
+                      return (
+                        <button
+                          key={ag}
+                          type="button"
+                          onClick={() => setActiveAgeGroup(ag)}
+                          className={`flex-1 rounded-md py-2 text-xs font-bold transition-colors ${
+                            activeAgeGroup === ag ? "bg-lime text-lime-foreground shadow-sm" : "text-muted-foreground hover:text-navy"
+                          }`}
+                        >
+                          {AGE_GROUP_LABELS[ag]}
+                          {count > 0 && (
+                            <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-black ${
+                              activeAgeGroup === ag ? "bg-navy text-white" : "bg-lime/30 text-navy"
+                            }`}>
+                              {count}
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  {/* Slot grid */}
+                  <div className="mt-3 overflow-x-auto rounded-md border border-border">
+                    <table className="min-w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-border bg-muted/50">
+                          <th className="px-3 py-2 text-left font-semibold text-navy">Time</th>
+                          {WEEKDAYS.map((d) => (
+                            <th key={d} className="px-3 py-2 text-center font-semibold text-navy">{d}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {SLOT_HOURS.map((hour) => (
+                          <tr key={hour} className="border-b border-border last:border-0 odd:bg-muted/20">
+                            <td className="whitespace-nowrap px-3 py-2 font-medium text-navy">
+                              {formatHour(hour)} – {formatEndHour(hour)}
+                            </td>
+                            {WEEKDAYS.map((_, wd) => {
+                              const k = slotKey(activeSlotClubId, activeAgeGroup, wd, hour)
+                              const isOn = k in customSlots
+                              const cap = customSlots[k] ?? 10
+                              return (
+                                <td key={wd} className="px-1.5 py-1.5 text-center">
+                                  {isOn ? (
+                                    <div className="flex flex-col items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleSlot(activeSlotClubId, activeAgeGroup, wd, hour)}
+                                        className="rounded bg-lime px-2 py-0.5 text-xs font-bold text-lime-foreground"
+                                      >
+                                        ON
+                                      </button>
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={99}
+                                        value={cap}
+                                        onChange={(e) => setCapacity(activeSlotClubId, activeAgeGroup, wd, hour, Number(e.target.value))}
+                                        aria-label={`Capacity for ${WEEKDAYS[wd]} ${formatHour(hour)} (${activeAgeGroup}) at club ${activeSlotClubId}`}
+                                        className="w-12 rounded border border-border bg-background px-1 py-0.5 text-center text-xs outline-none focus:border-lime"
+                                      />
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleSlot(activeSlotClubId, activeAgeGroup, wd, hour)}
+                                      className="rounded border border-dashed border-border px-2 py-0.5 text-xs text-muted-foreground hover:border-lime hover:text-navy"
+                                    >
+                                      +
+                                    </button>
+                                  )}
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {activeCount} slot{activeCount !== 1 ? "s" : ""} for {AGE_GROUP_LABELS[activeAgeGroup]} at this venue
+                    {" · "}
+                    {totalCount} total across all venues &amp; age groups
+                  </p>
+                </>
+              )}
             </>
           )}
         </div>
