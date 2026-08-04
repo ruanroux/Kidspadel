@@ -48,6 +48,9 @@ export function AdminTabs({
   webhookLogs,
   moments,
   siteImages,
+  billingLedger,
+  billingOutstanding,
+  billingRevenue,
 }: {
   clubs: Club[]
   schools: School[]
