@@ -25,9 +25,9 @@ import { markReferralDiscountApplied } from "@/app/actions/referrals"
 import {
   getMonthsForEnrollment,
   updateMonthStatus,
-  MONTH_NAMES,
   type SubscriptionMonthRow,
 } from "@/app/actions/subscription-months"
+import { MONTH_NAMES } from "@/lib/billing-utils"
 import type { CoachRow } from "@/app/actions/coaches"
 import type { PublicPackage } from "@/app/actions/packages"
 import type { Club } from "@/lib/db/schema"

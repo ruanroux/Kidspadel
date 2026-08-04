@@ -462,12 +462,5 @@ export async function autoMarkMonthPaidFromWebhook(
     .where(eq(subscriptionMonths.id, targetRow.id))
 }
 
-// ---------------------------------------------------------------------------
-// Exported month label helper (used by UI)
-// ---------------------------------------------------------------------------
-
-export function getMonthLabel(year: number, month: number): string {
-  return formatMonth(year, month)
-}
-
-export { BILLING_START_YEAR, BILLING_START_MONTH, BILLING_END_MONTH, MONTH_NAMES }
+// MONTH_NAMES, BILLING_START_YEAR/MONTH/END_MONTH, getMonthLabel, formatMonth
+// are all exported from lib/billing-utils.ts — import from there in UI code.
