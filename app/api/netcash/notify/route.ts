@@ -123,14 +123,25 @@ export async function POST(req: NextRequest) {
     return ack(msg)
   }
 
-  // Look up the order by our referenceNumber
+  // Netcash appends "-O{n}" to the reference for recurring billing occurrences
+  // e.g. "NGP-2026-LMDFFFXRAE-O15" → base ref is "NGP-2026-LMDFFFXRAE"
+  // Strip the suffix so we can match against our stored referenceNumber.
+  const enrollmentRef = reference.replace(/-O\d+$/, "")
+  console.log(`[netcash-itn] reference="${reference}" enrollmentRef="${enrollmentRef}"`)
+
+  // Look up the order by our referenceNumber (try both raw and stripped)
   const orderRows = await db
     .select()
     .from(orders)
     .where(eq(orders.netcashOrderId, reference))
     .limit(1)
 
-  let order = orderRows[0]
+  // Also try with the stripped reference in case orders were stored that way
+  const orderRowsFallback = orderRows.length === 0
+    ? await db.select().from(orders).where(eq(orders.netcashOrderId, enrollmentRef)).limit(1)
+    : []
+
+  let order = orderRows[0] ?? orderRowsFallback[0]
 
   // Resolve the enrollment — either via order or directly by referenceNumber
   let enrollmentRow: typeof enrollments.$inferSelect | undefined
@@ -142,18 +153,22 @@ export async function POST(req: NextRequest) {
       .where(eq(enrollments.id, order.enrollmentId))
       .limit(1)
     enrollmentRow = enrollRows[0]
-  } else {
-    // Fallback: look up enrollment directly by referenceNumber
+  }
+
+  if (!enrollmentRow) {
+    // Fallback: look up enrollment directly by stripped referenceNumber
+    // This handles the common case where Netcash sends "NGP-2026-LMDFFFXRAE-O15"
+    // and we need to match against stored "NGP-2026-LMDFFFXRAE"
     const enrollRows = await db
       .select()
       .from(enrollments)
-      .where(eq(enrollments.referenceNumber, reference))
+      .where(eq(enrollments.referenceNumber, enrollmentRef))
       .limit(1)
     enrollmentRow = enrollRows[0]
   }
 
   if (!enrollmentRow) {
-    const msg = `Step 1 failed — no enrollment found for Reference: ${reference}`
+    const msg = `Step 1 failed — no enrollment found for Reference: ${reference} (enrollmentRef: ${enrollmentRef})`
     console.error("[netcash-itn]", msg)
     if (logId) {
       await db
