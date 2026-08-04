@@ -912,6 +912,8 @@ function InlineBillingPanel({ enrollmentId }: { enrollmentId: number }) {
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState<number | null>(null)
   const [pending, startTransition] = useTransition()
+  const [discountInputs, setDiscountInputs] = useState<Record<number, string>>({})
+  const [partialInputs, setPartialInputs] = useState<Record<number, string>>({})
 
   useEffect(() => {
     getMonthsForEnrollment(enrollmentId)
@@ -919,16 +921,21 @@ function InlineBillingPanel({ enrollmentId }: { enrollmentId: number }) {
       .finally(() => setLoading(false))
   }, [enrollmentId])
 
-  function handleChange(id: number, status: "outstanding" | "paid" | "waived" | "deferred") {
+  function handleChange(id: number, status: "outstanding" | "paid" | "partial") {
+    const discountPct = Math.min(100, Math.max(0, parseInt(discountInputs[id] ?? "0") || 0))
+    const partialRaw = parseFloat(partialInputs[id] ?? "0") || 0
+    const paidCents = status === "partial" ? Math.round(partialRaw * 100) : undefined
     setUpdating(id)
     startTransition(async () => {
-      const res = await updateMonthStatus(id, status)
+      const res = await updateMonthStatus(id, status, { discountPct, paidCents })
       setUpdating(null)
       if (res.ok) {
         setMonths((prev) =>
           prev
             ? prev.map((m) =>
-                m.id === id ? { ...m, status, paidAt: status === "paid" ? new Date() : null } : m,
+                m.id === id
+                  ? { ...m, status, discountPct, paidCents: paidCents ?? null, paidAt: status === "paid" ? new Date() : null }
+                  : m,
               )
             : prev,
         )
@@ -951,45 +958,106 @@ function InlineBillingPanel({ enrollmentId }: { enrollmentId: number }) {
       )}
       {months && months.length > 0 && (
         <div className="grid grid-cols-5 gap-2">
-          {months.map((m) => (
-            <div
-              key={m.id}
-              className={`rounded-lg border p-2 text-center transition-colors ${
-                m.status === "paid" ? "border-lime/40 bg-lime/5" :
-                m.status === "outstanding" ? "border-amber-200 bg-amber-50" :
-                m.status === "waived" ? "border-sky-200 bg-sky-50" :
-                "border-border bg-card"
-              }`}
-            >
-              <p className="text-xs font-bold text-navy">{MONTH_NAMES[m.month - 1]}</p>
-              <p className="text-[10px] text-muted-foreground">
-                R {(m.amountCents / 100).toFixed(0)}
-              </p>
-              <div className="mt-1">
-                <span className={`inline-block rounded-full px-1.5 py-0.5 text-[9px] font-semibold capitalize ${
-                  m.status === "paid" ? "bg-lime/20 text-navy" :
-                  m.status === "outstanding" ? "bg-amber-100 text-amber-800" :
-                  "bg-muted text-muted-foreground"
-                }`}>
-                  {m.status}
-                </span>
-              </div>
-              <select
-                disabled={updating === m.id || pending}
-                value={m.status}
-                onChange={(e) =>
-                  handleChange(m.id, e.target.value as "outstanding" | "paid" | "waived" | "deferred")
-                }
-                className="mt-1 w-full rounded border border-border bg-background px-1 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-navy/30 disabled:opacity-50"
+          {months.map((m) => {
+            const discountVal = discountInputs[m.id] ?? String(m.discountPct ?? 0)
+            const discountNum = Math.min(100, Math.max(0, parseInt(discountVal) || 0))
+            const effectiveCents = Math.round(m.amountCents * (1 - discountNum / 100))
+            const partialVal = partialInputs[m.id] ?? (m.paidCents != null ? String((m.paidCents / 100).toFixed(2)) : "")
+            const partialPaid = parseFloat(partialVal) || 0
+            const remainingCents = Math.max(0, effectiveCents - Math.round(partialPaid * 100))
+            const isUpdating = updating === m.id
+
+            return (
+              <div
+                key={m.id}
+                className={`rounded-lg border p-2.5 transition-colors ${
+                  m.status === "paid" ? "border-lime/40 bg-lime/5" :
+                  m.status === "partial" ? "border-orange-200 bg-orange-50" :
+                  "border-amber-200 bg-amber-50"
+                }`}
               >
-                <option value="outstanding">Outstanding</option>
-                <option value="paid">Paid</option>
-                <option value="partial">Partial</option>
-                <option value="waived">Waived</option>
-                <option value="deferred">Deferred</option>
-              </select>
-            </div>
-          ))}
+                <p className="text-xs font-bold text-navy">{MONTH_NAMES[m.month - 1]}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {discountNum > 0 ? (
+                    <>
+                      <span className="line-through">R {(m.amountCents / 100).toFixed(0)}</span>{" "}
+                      <span className="font-semibold text-navy">R {(effectiveCents / 100).toFixed(0)}</span>
+                    </>
+                  ) : `R ${(m.amountCents / 100).toFixed(0)}`}
+                </p>
+                <div className="mt-1">
+                  <span className={`inline-block rounded-full px-1.5 py-0.5 text-[9px] font-semibold capitalize ${
+                    m.status === "paid" ? "bg-lime/20 text-navy" :
+                    m.status === "partial" ? "bg-orange-100 text-orange-800" :
+                    "bg-amber-100 text-amber-800"
+                  }`}>
+                    {m.status}
+                  </span>
+                </div>
+
+                {/* Discount % */}
+                <div className="mt-2">
+                  <label className="block text-[9px] font-semibold uppercase tracking-wide text-muted-foreground mb-0.5">
+                    Discount %
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={discountVal}
+                    onChange={(e) => setDiscountInputs((p) => ({ ...p, [m.id]: e.target.value }))}
+                    placeholder="0"
+                    className="w-full rounded border border-border bg-background px-1.5 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-navy/30"
+                  />
+                </div>
+
+                {/* Partial amount — only shown when partial */}
+                {m.status === "partial" && (
+                  <div className="mt-1.5">
+                    <label className="block text-[9px] font-semibold uppercase tracking-wide text-orange-700 mb-0.5">
+                      Paid (R)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={partialVal}
+                      onChange={(e) => setPartialInputs((p) => ({ ...p, [m.id]: e.target.value }))}
+                      placeholder="0.00"
+                      className="w-full rounded border border-orange-200 bg-background px-1.5 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-orange-300"
+                    />
+                    {remainingCents > 0 && (
+                      <p className="mt-0.5 text-[9px] font-semibold text-amber-700">
+                        Balance: R {(remainingCents / 100).toFixed(2)}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <select
+                  disabled={isUpdating || pending}
+                  value={m.status}
+                  onChange={(e) => handleChange(m.id, e.target.value as "outstanding" | "paid" | "partial")}
+                  className="mt-2 w-full rounded border border-border bg-background px-1 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-navy/30 disabled:opacity-50"
+                >
+                  <option value="outstanding">Outstanding</option>
+                  <option value="paid">Paid</option>
+                  <option value="partial">Partial</option>
+                </select>
+
+                {(discountNum > 0 || (m.status === "partial" && partialPaid > 0)) && (
+                  <button
+                    type="button"
+                    disabled={isUpdating || pending}
+                    onClick={() => handleChange(m.id, m.status as "outstanding" | "paid" | "partial")}
+                    className="mt-1.5 w-full rounded bg-navy px-1 py-0.5 text-[9px] font-bold text-white hover:bg-navy/80 disabled:opacity-50 transition-colors"
+                  >
+                    {isUpdating ? "Saving..." : "Apply"}
+                  </button>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

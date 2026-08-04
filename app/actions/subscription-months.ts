@@ -17,6 +17,8 @@ export type SubscriptionMonthRow = {
   month: number
   amountCents: number
   status: string
+  discountPct: number
+  paidCents: number | null
   paymentReference: string | null
   notes: string | null
   paidAt: Date | null
@@ -177,6 +179,8 @@ export async function getBillingLedger(year = BILLING_START_YEAR): Promise<Billi
       month: subscriptionMonths.month,
       amountCents: subscriptionMonths.amountCents,
       status: subscriptionMonths.status,
+      discountPct: subscriptionMonths.discountPct,
+      paidCents: subscriptionMonths.paidCents,
       paymentReference: subscriptionMonths.paymentReference,
       notes: subscriptionMonths.notes,
       paidAt: subscriptionMonths.paidAt,
@@ -211,7 +215,15 @@ export type OutstandingEntry = {
   packageName: string
   club: string
   referenceNumber: string
-  outstandingMonths: { id: number; year: number; month: number; amountCents: number; label: string }[]
+  outstandingMonths: {
+    id: number
+    year: number
+    month: number
+    amountCents: number
+    remainingCents: number  // amountCents - paidCents (for partial) or amountCents
+    status: string
+    label: string
+  }[]
   totalOutstandingCents: number
 }
 
@@ -222,6 +234,7 @@ export async function getOutstandingReport(year = BILLING_START_YEAR): Promise<O
     return []
   }
 
+  // Include both 'outstanding' and 'partial' months — partial still has a balance
   const rows = await db
     .select({
       id: subscriptionMonths.id,
@@ -229,6 +242,9 @@ export async function getOutstandingReport(year = BILLING_START_YEAR): Promise<O
       year: subscriptionMonths.year,
       month: subscriptionMonths.month,
       amountCents: subscriptionMonths.amountCents,
+      discountPct: subscriptionMonths.discountPct,
+      paidCents: subscriptionMonths.paidCents,
+      status: subscriptionMonths.status,
       childName: enrollments.childName,
       parentName: enrollments.parentName,
       parentEmail: enrollments.parentEmail,
@@ -242,7 +258,8 @@ export async function getOutstandingReport(year = BILLING_START_YEAR): Promise<O
     .where(
       and(
         eq(subscriptionMonths.year, year),
-        eq(subscriptionMonths.status, "outstanding"),
+        // outstanding OR partial (partial still has a remaining balance)
+        sql`${subscriptionMonths.status} IN ('outstanding', 'partial')`,
       )
     )
     .orderBy(asc(enrollments.childName), asc(subscriptionMonths.month))
@@ -265,17 +282,27 @@ export async function getOutstandingReport(year = BILLING_START_YEAR): Promise<O
       })
     }
     const entry = map.get(row.enrollmentId)!
+    // Effective due amount after discount
+    const discountedCents = Math.round(row.amountCents * (1 - (row.discountPct ?? 0) / 100))
+    // Remaining = discounted total minus what's already been paid (for partial)
+    const remainingCents = row.status === "partial"
+      ? Math.max(0, discountedCents - (row.paidCents ?? 0))
+      : discountedCents
     entry.outstandingMonths.push({
       id: row.id,
       year: row.year,
       month: row.month,
       amountCents: row.amountCents,
+      remainingCents,
+      status: row.status,
       label: formatMonth(row.year, row.month),
     })
-    entry.totalOutstandingCents += row.amountCents
+    entry.totalOutstandingCents += remainingCents
   }
 
-  return [...map.values()].sort((a, b) => a.childName.localeCompare(b.childName))
+  return [...map.values()]
+    .filter((e) => e.totalOutstandingCents > 0)
+    .sort((a, b) => a.childName.localeCompare(b.childName))
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +334,8 @@ export async function getRevenueReport(year = BILLING_START_YEAR): Promise<Reven
       month: subscriptionMonths.month,
       status: subscriptionMonths.status,
       amountCents: subscriptionMonths.amountCents,
+      discountPct: subscriptionMonths.discountPct,
+      paidCents: subscriptionMonths.paidCents,
     })
     .from(subscriptionMonths)
     .where(eq(subscriptionMonths.year, year))
@@ -333,15 +362,22 @@ export async function getRevenueReport(year = BILLING_START_YEAR): Promise<Reven
     const key = `${row.year}-${row.month}`
     const summary = monthMap.get(key)
     if (!summary) continue
-    summary.totalCents += row.amountCents
+    const discountedCents = Math.round(row.amountCents * (1 - (row.discountPct ?? 0) / 100))
+    summary.totalCents += discountedCents
     if (row.status === "paid") {
-      summary.paidCents += row.amountCents
+      summary.paidCents += discountedCents
       summary.paidCount++
     } else if (row.status === "outstanding") {
-      summary.outstandingCents += row.amountCents
+      summary.outstandingCents += discountedCents
       summary.outstandingCount++
-    } else if (row.status === "waived" || row.status === "deferred") {
-      summary.waivedCents += row.amountCents
+    } else if (row.status === "partial") {
+      // Partial: paidCents counts as collected, remainder is outstanding
+      const paid = row.paidCents ?? 0
+      const remaining = Math.max(0, discountedCents - paid)
+      summary.paidCents += paid
+      summary.outstandingCents += remaining
+      if (remaining > 0) summary.outstandingCount++
+      else summary.paidCount++
     }
   }
 
@@ -354,8 +390,8 @@ export async function getRevenueReport(year = BILLING_START_YEAR): Promise<Reven
 
 export async function updateMonthStatus(
   id: number,
-  status: "outstanding" | "paid" | "partial" | "waived" | "deferred",
-  opts?: { paymentReference?: string; notes?: string },
+  status: "outstanding" | "paid" | "partial",
+  opts?: { paymentReference?: string; notes?: string; discountPct?: number; paidCents?: number },
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     await requireAdmin()
@@ -364,6 +400,8 @@ export async function updateMonthStatus(
       .set({
         status,
         paidAt: status === "paid" ? new Date() : null,
+        discountPct: opts?.discountPct ?? 0,
+        paidCents: status === "partial" ? (opts?.paidCents ?? null) : null,
         paymentReference: opts?.paymentReference ?? null,
         notes: opts?.notes ?? null,
         updatedAt: new Date(),
