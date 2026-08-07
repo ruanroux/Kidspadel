@@ -280,13 +280,14 @@ export async function buildNetcashPayment(input: BuildNetcashPaymentInput): Prom
 
   // itemName (p5) is what Netcash shows in the "Description" column on their
   // transaction list. We embed the enrollment reference here so every Netcash
-  // transaction can be matched back to a sign-up at a glance — no ambiguity.
-  // Format: "NGP-2026-XXXXXXXX | Beginner Development Package"
-  const itemName = `${input.referenceNumber} | ${input.packageName}`
+  // transaction can be matched back to a sign-up at a glance.
+  // IMPORTANT: Netcash rejects special characters like | — / \ in p5 and p6.
+  // Use only alphanumeric, spaces, hyphens, and dots.
+  const itemName = `${input.referenceNumber} ${input.packageName}`
   const itemDescription =
     input.paymentType === "once-off"
-      ? `Once-off enrollment — ${input.referenceNumber} — ${input.packageName}`
-      : `Monthly subscription — ${input.referenceNumber} — ${input.packageName}`
+      ? `Once-off enrollment ${input.referenceNumber} ${input.packageName}`
+      : `Monthly subscription ${input.referenceNumber} ${input.packageName}`
 
   const formFields = buildNetcashPayNowFields({
     serviceKey,
