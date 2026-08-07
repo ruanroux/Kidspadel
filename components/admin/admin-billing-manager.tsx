@@ -198,6 +198,10 @@ function LedgerView({
   const [pending, startTransition] = useTransition()
   const [updating, setUpdating] = useState<number | null>(null)
   const [flash, setFlash] = useState<Record<number, "ok" | "err">>({})
+  // Per-month local edit state
+  const [discountInputs, setDiscountInputs] = useState<Record<number, string>>({})
+  const [discountReasons, setDiscountReasons] = useState<Record<number, string>>({})
+  const [partialInputs, setPartialInputs] = useState<Record<number, string>>({})
 
   // Group ledger rows by enrollmentId
   const grouped = useMemo(() => {
@@ -247,15 +251,21 @@ function LedgerView({
     )
   }, [grouped, search])
 
-  function handleStatusChange(rowId: number, newStatus: "outstanding" | "paid" | "waived" | "deferred") {
+  function handleStatusChange(rowId: number, newStatus: "outstanding" | "paid" | "partial") {
+    const discountPct = Math.min(100, Math.max(0, parseInt(discountInputs[rowId] ?? "0") || 0))
+    const discountReason = discountReasons[rowId]?.trim() || undefined
+    const partialRaw = parseFloat(partialInputs[rowId] ?? "0") || 0
+    const paidCents = newStatus === "partial" ? Math.round(partialRaw * 100) : undefined
     setUpdating(rowId)
     startTransition(async () => {
-      const res = await updateMonthStatus(rowId, newStatus)
+      const res = await updateMonthStatus(rowId, newStatus, { discountPct, discountReason, paidCents })
       setUpdating(null)
       if (res.ok) {
         onLedgerChange(
           ledger.map((r) =>
-            r.id === rowId ? { ...r, status: newStatus, paidAt: newStatus === "paid" ? new Date() : null } : r,
+            r.id === rowId
+              ? { ...r, status: newStatus, discountPct, discountReason: discountReason ?? null, paidCents: paidCents ?? null, paidAt: newStatus === "paid" ? new Date() : null }
+              : r,
           ),
         )
         setFlash((f) => ({ ...f, [rowId]: "ok" }))
@@ -370,34 +380,120 @@ function LedgerView({
                   {group.months.map((m) => {
                     const isUpdating = updating === m.id
                     const flashState = flash[m.id]
+                    const discountVal = discountInputs[m.id] ?? String(m.discountPct ?? 0)
+                    const discountNum = Math.min(100, Math.max(0, parseInt(discountVal) || 0))
+                    const reasonVal = discountReasons[m.id] ?? (m.discountReason ?? "")
+                    const effectiveCents = Math.round(m.amountCents * (1 - discountNum / 100))
+                    const partialVal = partialInputs[m.id] ?? (m.paidCents != null ? String((m.paidCents / 100).toFixed(2)) : "")
+                    const partialPaid = parseFloat(partialVal) || 0
+                    const remainingCents = Math.max(0, effectiveCents - Math.round(partialPaid * 100))
+                    const hasChanges = discountNum > 0 || (m.status === "partial" && partialPaid > 0)
+
                     return (
-                      <div key={m.id} className={`rounded-lg border p-2 text-center transition-colors ${
+                      <div key={m.id} className={`rounded-lg border p-2.5 transition-colors ${
                         m.status === "paid" ? "border-lime/40 bg-lime/5" :
-                        m.status === "outstanding" ? "border-amber-200 bg-amber-50" :
-                        m.status === "waived" ? "border-sky-200 bg-sky-50" :
-                        "border-border bg-card"
+                        m.status === "partial" ? "border-orange-200 bg-orange-50" :
+                        "border-amber-200 bg-amber-50"
                       }`}>
-                        <p className="text-xs font-bold text-navy">{MONTH_NAMES[m.month - 1]}</p>
-                        <p className="text-[10px] text-muted-foreground">{ZAR(m.amountCents)}</p>
+                        {/* Header row */}
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-xs font-bold text-navy">{MONTH_NAMES[m.month - 1]}</p>
+                          {flashState === "ok" && <Check className="h-3.5 w-3.5 text-lime" />}
+                          {flashState === "err" && <X className="h-3.5 w-3.5 text-red-500" />}
+                        </div>
+
+                        {/* Amount — show discounted price if discount applied */}
+                        <p className="text-[10px] text-muted-foreground">
+                          {discountNum > 0 ? (
+                            <>
+                              <span className="line-through">{ZAR(m.amountCents)}</span>{" "}
+                              <span className="font-semibold text-navy">{ZAR(effectiveCents)}</span>
+                              {discountNum > 0 && <span className="ml-1 text-lime font-bold">-{discountNum}%</span>}
+                            </>
+                          ) : ZAR(m.amountCents)}
+                        </p>
+
                         <div className="mt-1.5">
                           <StatusDot status={m.status} />
                         </div>
-                        {flashState === "ok" && <Check className="mx-auto mt-1 h-3.5 w-3.5 text-lime" />}
-                        {flashState === "err" && <X className="mx-auto mt-1 h-3.5 w-3.5 text-red-500" />}
+
+                        {/* Status dropdown */}
                         <select
                           disabled={isUpdating || pending}
                           value={m.status}
-                          onChange={(e) =>
-                            handleStatusChange(m.id, e.target.value as "outstanding" | "paid" | "waived" | "deferred")
-                          }
-                          className="mt-1.5 w-full rounded border border-border bg-background px-1 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-navy/30 disabled:opacity-50"
+                          onChange={(e) => handleStatusChange(m.id, e.target.value as "outstanding" | "paid" | "partial")}
+                          className="mt-2 w-full rounded border border-border bg-background px-1 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-navy/30 disabled:opacity-50"
                         >
                           <option value="outstanding">Outstanding</option>
                           <option value="paid">Paid</option>
                           <option value="partial">Partial</option>
-                          <option value="waived">Waived</option>
-                          <option value="deferred">Deferred</option>
                         </select>
+
+                        {/* Discount % */}
+                        <div className="mt-2">
+                          <label className="block text-[9px] font-semibold uppercase tracking-wide text-muted-foreground mb-0.5">Discount %</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={discountVal}
+                            onChange={(e) => setDiscountInputs((p) => ({ ...p, [m.id]: e.target.value }))}
+                            placeholder="0"
+                            className="w-full rounded border border-border bg-background px-1.5 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-navy/30"
+                          />
+                        </div>
+
+                        {/* Discount reason — shown when discount > 0 */}
+                        {discountNum > 0 && (
+                          <div className="mt-1.5">
+                            <label className="block text-[9px] font-semibold uppercase tracking-wide text-muted-foreground mb-0.5">Reason</label>
+                            <input
+                              type="text"
+                              value={reasonVal}
+                              onChange={(e) => setDiscountReasons((p) => ({ ...p, [m.id]: e.target.value }))}
+                              placeholder="e.g. Sibling discount"
+                              className="w-full rounded border border-border bg-background px-1.5 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-navy/30"
+                            />
+                          </div>
+                        )}
+
+                        {/* Partial amount — shown when status is partial */}
+                        {m.status === "partial" && (
+                          <div className="mt-1.5">
+                            <label className="block text-[9px] font-semibold uppercase tracking-wide text-orange-700 mb-0.5">Paid (R)</label>
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.01}
+                              value={partialVal}
+                              onChange={(e) => setPartialInputs((p) => ({ ...p, [m.id]: e.target.value }))}
+                              placeholder="0.00"
+                              className="w-full rounded border border-orange-200 bg-background px-1.5 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-orange-300"
+                            />
+                            {remainingCents > 0 && (
+                              <p className="mt-0.5 text-[9px] font-semibold text-amber-700">Balance: {ZAR(remainingCents)}</p>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Apply button — only when discount or partial amount is set */}
+                        {hasChanges && (
+                          <button
+                            type="button"
+                            disabled={isUpdating || pending}
+                            onClick={() => handleStatusChange(m.id, m.status as "outstanding" | "paid" | "partial")}
+                            className="mt-2 w-full rounded bg-navy px-1 py-0.5 text-[9px] font-bold text-white hover:bg-navy/80 disabled:opacity-50 transition-colors"
+                          >
+                            {isUpdating ? "Saving..." : "Apply"}
+                          </button>
+                        )}
+
+                        {/* Show saved discount reason */}
+                        {!discountNum && m.discountReason && (
+                          <p className="mt-1 text-[9px] italic text-muted-foreground truncate" title={m.discountReason}>
+                            {m.discountReason}
+                          </p>
+                        )}
                       </div>
                     )
                   })}

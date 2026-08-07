@@ -17,6 +17,9 @@ export type SubscriptionMonthRow = {
   month: number
   amountCents: number
   status: string
+  discountPct: number
+  discountReason: string | null
+  paidCents: number | null
   paymentReference: string | null
   notes: string | null
   paidAt: Date | null
@@ -177,6 +180,9 @@ export async function getBillingLedger(year = BILLING_START_YEAR): Promise<Billi
       month: subscriptionMonths.month,
       amountCents: subscriptionMonths.amountCents,
       status: subscriptionMonths.status,
+      discountPct: subscriptionMonths.discountPct,
+      discountReason: subscriptionMonths.discountReason,
+      paidCents: subscriptionMonths.paidCents,
       paymentReference: subscriptionMonths.paymentReference,
       notes: subscriptionMonths.notes,
       paidAt: subscriptionMonths.paidAt,
@@ -354,8 +360,14 @@ export async function getRevenueReport(year = BILLING_START_YEAR): Promise<Reven
 
 export async function updateMonthStatus(
   id: number,
-  status: "outstanding" | "paid" | "partial" | "waived" | "deferred",
-  opts?: { paymentReference?: string; notes?: string },
+  status: "outstanding" | "paid" | "partial",
+  opts?: {
+    paymentReference?: string
+    notes?: string
+    discountPct?: number
+    discountReason?: string
+    paidCents?: number
+  },
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     await requireAdmin()
@@ -364,6 +376,9 @@ export async function updateMonthStatus(
       .set({
         status,
         paidAt: status === "paid" ? new Date() : null,
+        discountPct: opts?.discountPct ?? 0,
+        discountReason: opts?.discountReason ?? null,
+        paidCents: status === "partial" ? (opts?.paidCents ?? null) : null,
         paymentReference: opts?.paymentReference ?? null,
         notes: opts?.notes ?? null,
         updatedAt: new Date(),
