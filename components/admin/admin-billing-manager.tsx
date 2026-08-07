@@ -196,8 +196,10 @@ function LedgerView({
   const [pending, startTransition] = useTransition()
   const [updating, setUpdating] = useState<number | null>(null)
   const [flash, setFlash] = useState<Record<number, "ok" | "err">>({})
-  // Per-month local edit state for discount % and partial amount
+  // Per-month draft state — nothing commits until Save is clicked
+  const [pendingStatus, setPendingStatus] = useState<Record<number, string>>({})
   const [discountInputs, setDiscountInputs] = useState<Record<number, string>>({})
+  const [discountReasons, setDiscountReasons] = useState<Record<number, string>>({})
   const [partialInputs, setPartialInputs] = useState<Record<number, string>>({})
 
   // Group ledger rows by enrollmentId
@@ -248,26 +250,34 @@ function LedgerView({
     )
   }, [grouped, search])
 
-  function handleStatusChange(rowId: number, newStatus: "outstanding" | "paid" | "partial") {
-    const discountPct = Math.min(100, Math.max(0, parseInt(discountInputs[rowId] ?? "0") || 0))
-    const partialRaw = parseFloat(partialInputs[rowId] ?? "0") || 0
+  function handleApply(rowId: number) {
+    const dbRow = ledger.find((r) => r.id === rowId)
+    const newStatus = (pendingStatus[rowId] ?? dbRow?.status ?? "outstanding") as "outstanding" | "paid" | "partial"
+    const discountPct = discountInputs[rowId] !== undefined
+      ? Math.min(100, Math.max(0, parseInt(discountInputs[rowId]) || 0))
+      : (dbRow?.discountPct ?? 0)
+    const discountReason = discountReasons[rowId] !== undefined
+      ? discountReasons[rowId].trim() || undefined
+      : (dbRow?.discountReason ?? undefined)
+    const partialRaw = partialInputs[rowId] !== undefined
+      ? parseFloat(partialInputs[rowId]) || 0
+      : (dbRow?.paidCents != null ? dbRow.paidCents / 100 : 0)
     const paidCents = newStatus === "partial" ? Math.round(partialRaw * 100) : undefined
 
     setUpdating(rowId)
     startTransition(async () => {
-      const res = await updateMonthStatus(rowId, newStatus, { discountPct, paidCents })
+      const res = await updateMonthStatus(rowId, newStatus, { discountPct, discountReason, paidCents })
       setUpdating(null)
       if (res.ok) {
+        // Clear draft state — now committed to DB
+        setPendingStatus((p) => { const n = { ...p }; delete n[rowId]; return n })
+        setDiscountInputs((p) => { const n = { ...p }; delete n[rowId]; return n })
+        setDiscountReasons((p) => { const n = { ...p }; delete n[rowId]; return n })
+        setPartialInputs((p) => { const n = { ...p }; delete n[rowId]; return n })
         onLedgerChange(
           ledger.map((r) =>
             r.id === rowId
-              ? {
-                  ...r,
-                  status: newStatus,
-                  discountPct,
-                  paidCents: newStatus === "partial" ? paidCents ?? null : null,
-                  paidAt: newStatus === "paid" ? new Date() : null,
-                }
+              ? { ...r, status: newStatus, discountPct, discountReason: discountReason ?? null, paidCents: paidCents ?? null, paidAt: newStatus === "paid" ? new Date() : null }
               : r,
           ),
         )
@@ -393,17 +403,24 @@ function LedgerView({
                   {group.months.map((m) => {
                     const isUpdating = updating === m.id
                     const flashState = flash[m.id]
+                    const displayStatus = pendingStatus[m.id] ?? m.status
                     const discountVal = discountInputs[m.id] ?? String(m.discountPct ?? 0)
                     const discountNum = Math.min(100, Math.max(0, parseInt(discountVal) || 0))
+                    const reasonVal = discountReasons[m.id] ?? (m.discountReason ?? "")
                     const effectiveCents = Math.round(m.amountCents * (1 - discountNum / 100))
                     const partialVal = partialInputs[m.id] ?? (m.paidCents != null ? String((m.paidCents / 100).toFixed(2)) : "")
                     const partialPaid = parseFloat(partialVal) || 0
                     const remainingCents = Math.max(0, effectiveCents - Math.round(partialPaid * 100))
+                    const hasDraft =
+                      (pendingStatus[m.id] !== undefined && pendingStatus[m.id] !== m.status) ||
+                      discountInputs[m.id] !== undefined ||
+                      discountReasons[m.id] !== undefined ||
+                      partialInputs[m.id] !== undefined
 
                     return (
                       <div key={m.id} className={`rounded-lg border p-2.5 transition-colors ${
-                        m.status === "paid" ? "border-lime/40 bg-lime/5" :
-                        m.status === "partial" ? "border-orange-200 bg-orange-50" :
+                        displayStatus === "paid" ? "border-lime/40 bg-lime/5" :
+                        displayStatus === "partial" ? "border-orange-200 bg-orange-50" :
                         "border-amber-200 bg-amber-50"
                       }`}>
                         <div className="flex items-center justify-between">
@@ -413,15 +430,28 @@ function LedgerView({
                         </div>
                         <p className="text-[10px] text-muted-foreground">
                           {discountNum > 0 ? (
-                            <span>
+                            <>
                               <span className="line-through">{ZAR(m.amountCents)}</span>{" "}
                               <span className="font-semibold text-navy">{ZAR(effectiveCents)}</span>
-                            </span>
+                              <span className="ml-1 text-lime font-bold">-{discountNum}%</span>
+                            </>
                           ) : ZAR(m.amountCents)}
                         </p>
                         <div className="mt-1.5">
-                          <StatusDot status={m.status} />
+                          <StatusDot status={displayStatus} />
                         </div>
+
+                        {/* Status dropdown — only updates draft, never auto-saves */}
+                        <select
+                          disabled={isUpdating || pending}
+                          value={displayStatus}
+                          onChange={(e) => setPendingStatus((p) => ({ ...p, [m.id]: e.target.value }))}
+                          className="mt-2 w-full rounded border border-border bg-background px-1 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-navy/30 disabled:opacity-50"
+                        >
+                          <option value="outstanding">Outstanding</option>
+                          <option value="paid">Paid</option>
+                          <option value="partial">Partial</option>
+                        </select>
 
                         {/* Discount % */}
                         <div className="mt-2">
@@ -439,8 +469,24 @@ function LedgerView({
                           />
                         </div>
 
-                        {/* Partial amount — only shown when partial is selected */}
-                        {m.status === "partial" && (
+                        {/* Discount reason — shown when discount > 0 */}
+                        {discountNum > 0 && (
+                          <div className="mt-1.5">
+                            <label className="block text-[9px] font-semibold uppercase tracking-wide text-muted-foreground mb-0.5">
+                              Reason
+                            </label>
+                            <input
+                              type="text"
+                              value={reasonVal}
+                              onChange={(e) => setDiscountReasons((p) => ({ ...p, [m.id]: e.target.value }))}
+                              placeholder="e.g. Sibling discount"
+                              className="w-full rounded border border-border bg-background px-1.5 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-navy/30"
+                            />
+                          </div>
+                        )}
+
+                        {/* Partial amount — shown when draft or saved status is partial */}
+                        {displayStatus === "partial" && (
                           <div className="mt-1.5">
                             <label className="block text-[9px] font-semibold uppercase tracking-wide text-orange-700 mb-0.5">
                               Paid (R)
@@ -462,33 +508,24 @@ function LedgerView({
                           </div>
                         )}
 
-                        {/* Status dropdown */}
-                        <select
-                          disabled={isUpdating || pending}
-                          value={m.status}
-                          onChange={(e) => {
-                            const s = e.target.value as "outstanding" | "paid" | "partial"
-                            // If switching to partial, show the amount input
-                            handleStatusChange(m.id, s)
-                          }}
-                          className="mt-2 w-full rounded border border-border bg-background px-1 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-navy/30 disabled:opacity-50"
-                        >
-                          <option value="outstanding">Outstanding</option>
-                          <option value="paid">Paid</option>
-                          <option value="partial">Partial</option>
-                        </select>
-
-                        {/* Apply button — only when discount or partial amount is set */}
-                        {(discountNum > 0 || (m.status === "partial" && partialPaid > 0)) && (
-                          <button
-                            type="button"
-                            disabled={isUpdating || pending}
-                            onClick={() => handleStatusChange(m.id, m.status as "outstanding" | "paid" | "partial")}
-                            className="mt-1.5 w-full rounded bg-navy px-1 py-0.5 text-[9px] font-bold text-white hover:bg-navy/80 disabled:opacity-50 transition-colors"
-                          >
-                            {isUpdating ? "Saving..." : "Apply"}
-                          </button>
+                        {/* Saved discount reason shown when not editing */}
+                        {discountInputs[m.id] === undefined && !discountNum && m.discountReason && (
+                          <p className="mt-1 text-[9px] italic text-muted-foreground truncate" title={m.discountReason}>
+                            {m.discountReason}
+                          </p>
                         )}
+
+                        {/* Save button — always visible, highlighted when unsaved draft */}
+                        <button
+                          type="button"
+                          disabled={isUpdating || pending}
+                          onClick={() => handleApply(m.id)}
+                          className={`mt-2 w-full rounded px-1 py-0.5 text-[9px] font-bold text-white transition-colors disabled:opacity-50 ${
+                            hasDraft ? "bg-navy hover:bg-navy/80 ring-1 ring-navy/40" : "bg-navy/50 hover:bg-navy/70"
+                          }`}
+                        >
+                          {isUpdating ? "Saving..." : hasDraft ? "Apply changes" : "Save"}
+                        </button>
                       </div>
                     )
                   })}

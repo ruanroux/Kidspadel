@@ -912,7 +912,9 @@ function InlineBillingPanel({ enrollmentId }: { enrollmentId: number }) {
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState<number | null>(null)
   const [pending, startTransition] = useTransition()
+  const [pendingStatus, setPendingStatus] = useState<Record<number, string>>({})
   const [discountInputs, setDiscountInputs] = useState<Record<number, string>>({})
+  const [discountReasons, setDiscountReasons] = useState<Record<number, string>>({})
   const [partialInputs, setPartialInputs] = useState<Record<number, string>>({})
 
   useEffect(() => {
@@ -921,20 +923,33 @@ function InlineBillingPanel({ enrollmentId }: { enrollmentId: number }) {
       .finally(() => setLoading(false))
   }, [enrollmentId])
 
-  function handleChange(id: number, status: "outstanding" | "paid" | "partial") {
-    const discountPct = Math.min(100, Math.max(0, parseInt(discountInputs[id] ?? "0") || 0))
-    const partialRaw = parseFloat(partialInputs[id] ?? "0") || 0
-    const paidCents = status === "partial" ? Math.round(partialRaw * 100) : undefined
+  function handleApply(id: number) {
+    const dbRow = months?.find((m) => m.id === id)
+    const newStatus = (pendingStatus[id] ?? dbRow?.status ?? "outstanding") as "outstanding" | "paid" | "partial"
+    const discountPct = discountInputs[id] !== undefined
+      ? Math.min(100, Math.max(0, parseInt(discountInputs[id]) || 0))
+      : (dbRow?.discountPct ?? 0)
+    const discountReason = discountReasons[id] !== undefined
+      ? discountReasons[id].trim() || undefined
+      : (dbRow?.discountReason ?? undefined)
+    const partialRaw = partialInputs[id] !== undefined
+      ? parseFloat(partialInputs[id]) || 0
+      : (dbRow?.paidCents != null ? dbRow.paidCents / 100 : 0)
+    const paidCents = newStatus === "partial" ? Math.round(partialRaw * 100) : undefined
     setUpdating(id)
     startTransition(async () => {
-      const res = await updateMonthStatus(id, status, { discountPct, paidCents })
+      const res = await updateMonthStatus(id, newStatus, { discountPct, discountReason, paidCents })
       setUpdating(null)
       if (res.ok) {
+        setPendingStatus((p) => { const n = { ...p }; delete n[id]; return n })
+        setDiscountInputs((p) => { const n = { ...p }; delete n[id]; return n })
+        setDiscountReasons((p) => { const n = { ...p }; delete n[id]; return n })
+        setPartialInputs((p) => { const n = { ...p }; delete n[id]; return n })
         setMonths((prev) =>
           prev
             ? prev.map((m) =>
                 m.id === id
-                  ? { ...m, status, discountPct, paidCents: paidCents ?? null, paidAt: status === "paid" ? new Date() : null }
+                  ? { ...m, status: newStatus, discountPct, discountReason: discountReason ?? null, paidCents: paidCents ?? null, paidAt: newStatus === "paid" ? new Date() : null }
                   : m,
               )
             : prev,
@@ -959,20 +974,27 @@ function InlineBillingPanel({ enrollmentId }: { enrollmentId: number }) {
       {months && months.length > 0 && (
         <div className="grid grid-cols-5 gap-2">
           {months.map((m) => {
+            const isUpdating = updating === m.id
+            const displayStatus = pendingStatus[m.id] ?? m.status
             const discountVal = discountInputs[m.id] ?? String(m.discountPct ?? 0)
             const discountNum = Math.min(100, Math.max(0, parseInt(discountVal) || 0))
+            const reasonVal = discountReasons[m.id] ?? (m.discountReason ?? "")
             const effectiveCents = Math.round(m.amountCents * (1 - discountNum / 100))
             const partialVal = partialInputs[m.id] ?? (m.paidCents != null ? String((m.paidCents / 100).toFixed(2)) : "")
             const partialPaid = parseFloat(partialVal) || 0
             const remainingCents = Math.max(0, effectiveCents - Math.round(partialPaid * 100))
-            const isUpdating = updating === m.id
+            const hasDraft =
+              (pendingStatus[m.id] !== undefined && pendingStatus[m.id] !== m.status) ||
+              discountInputs[m.id] !== undefined ||
+              discountReasons[m.id] !== undefined ||
+              partialInputs[m.id] !== undefined
 
             return (
               <div
                 key={m.id}
                 className={`rounded-lg border p-2.5 transition-colors ${
-                  m.status === "paid" ? "border-lime/40 bg-lime/5" :
-                  m.status === "partial" ? "border-orange-200 bg-orange-50" :
+                  displayStatus === "paid" ? "border-lime/40 bg-lime/5" :
+                  displayStatus === "partial" ? "border-orange-200 bg-orange-50" :
                   "border-amber-200 bg-amber-50"
                 }`}
               >
@@ -982,18 +1004,31 @@ function InlineBillingPanel({ enrollmentId }: { enrollmentId: number }) {
                     <>
                       <span className="line-through">R {(m.amountCents / 100).toFixed(0)}</span>{" "}
                       <span className="font-semibold text-navy">R {(effectiveCents / 100).toFixed(0)}</span>
+                      <span className="ml-1 text-lime font-bold">-{discountNum}%</span>
                     </>
                   ) : `R ${(m.amountCents / 100).toFixed(0)}`}
                 </p>
                 <div className="mt-1">
                   <span className={`inline-block rounded-full px-1.5 py-0.5 text-[9px] font-semibold capitalize ${
-                    m.status === "paid" ? "bg-lime/20 text-navy" :
-                    m.status === "partial" ? "bg-orange-100 text-orange-800" :
+                    displayStatus === "paid" ? "bg-lime/20 text-navy" :
+                    displayStatus === "partial" ? "bg-orange-100 text-orange-800" :
                     "bg-amber-100 text-amber-800"
                   }`}>
-                    {m.status}
+                    {displayStatus}
                   </span>
                 </div>
+
+                {/* Status dropdown — only updates draft, never auto-saves */}
+                <select
+                  disabled={isUpdating || pending}
+                  value={displayStatus}
+                  onChange={(e) => setPendingStatus((p) => ({ ...p, [m.id]: e.target.value }))}
+                  className="mt-2 w-full rounded border border-border bg-background px-1 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-navy/30 disabled:opacity-50"
+                >
+                  <option value="outstanding">Outstanding</option>
+                  <option value="paid">Paid</option>
+                  <option value="partial">Partial</option>
+                </select>
 
                 {/* Discount % */}
                 <div className="mt-2">
@@ -1011,8 +1046,24 @@ function InlineBillingPanel({ enrollmentId }: { enrollmentId: number }) {
                   />
                 </div>
 
-                {/* Partial amount — only shown when partial */}
-                {m.status === "partial" && (
+                {/* Discount reason — shown when discount > 0 */}
+                {discountNum > 0 && (
+                  <div className="mt-1.5">
+                    <label className="block text-[9px] font-semibold uppercase tracking-wide text-muted-foreground mb-0.5">
+                      Reason
+                    </label>
+                    <input
+                      type="text"
+                      value={reasonVal}
+                      onChange={(e) => setDiscountReasons((p) => ({ ...p, [m.id]: e.target.value }))}
+                      placeholder="e.g. Sibling discount"
+                      className="w-full rounded border border-border bg-background px-1.5 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-navy/30"
+                    />
+                  </div>
+                )}
+
+                {/* Partial amount — shown when draft or saved status is partial */}
+                {displayStatus === "partial" && (
                   <div className="mt-1.5">
                     <label className="block text-[9px] font-semibold uppercase tracking-wide text-orange-700 mb-0.5">
                       Paid (R)
@@ -1034,27 +1085,24 @@ function InlineBillingPanel({ enrollmentId }: { enrollmentId: number }) {
                   </div>
                 )}
 
-                <select
-                  disabled={isUpdating || pending}
-                  value={m.status}
-                  onChange={(e) => handleChange(m.id, e.target.value as "outstanding" | "paid" | "partial")}
-                  className="mt-2 w-full rounded border border-border bg-background px-1 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-navy/30 disabled:opacity-50"
-                >
-                  <option value="outstanding">Outstanding</option>
-                  <option value="paid">Paid</option>
-                  <option value="partial">Partial</option>
-                </select>
-
-                {(discountNum > 0 || (m.status === "partial" && partialPaid > 0)) && (
-                  <button
-                    type="button"
-                    disabled={isUpdating || pending}
-                    onClick={() => handleChange(m.id, m.status as "outstanding" | "paid" | "partial")}
-                    className="mt-1.5 w-full rounded bg-navy px-1 py-0.5 text-[9px] font-bold text-white hover:bg-navy/80 disabled:opacity-50 transition-colors"
-                  >
-                    {isUpdating ? "Saving..." : "Apply"}
-                  </button>
+                {/* Saved discount reason when not in edit mode */}
+                {discountInputs[m.id] === undefined && !discountNum && m.discountReason && (
+                  <p className="mt-1 text-[9px] italic text-muted-foreground truncate" title={m.discountReason}>
+                    {m.discountReason}
+                  </p>
                 )}
+
+                {/* Save button — always visible, highlighted when unsaved draft */}
+                <button
+                  type="button"
+                  disabled={isUpdating || pending}
+                  onClick={() => handleApply(m.id)}
+                  className={`mt-2 w-full rounded px-1 py-0.5 text-[9px] font-bold text-white transition-colors disabled:opacity-50 ${
+                    hasDraft ? "bg-navy hover:bg-navy/80 ring-1 ring-navy/40" : "bg-navy/50 hover:bg-navy/70"
+                  }`}
+                >
+                  {isUpdating ? "Saving..." : hasDraft ? "Apply changes" : "Save"}
+                </button>
               </div>
             )
           })}

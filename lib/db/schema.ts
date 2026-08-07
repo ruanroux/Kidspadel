@@ -516,6 +516,8 @@ export const subscriptionMonths = pgTable(
     status: text("status").notNull().default("outstanding"),
     // Discount percentage applied (0–100)
     discountPct: integer("discountPct").notNull().default(0),
+    // Human-readable reason for the discount e.g. "Sibling discount", "Bursary"
+    discountReason: text("discountReason"),
     // For partial payments: amount actually paid in cents
     paidCents: integer("paidCents"),
     // Netcash/payment reference that settled this month (if any)
