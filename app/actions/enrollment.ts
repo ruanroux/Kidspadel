@@ -23,8 +23,10 @@ async function getUserId() {
 
 function generateReference() {
   const year = new Date().getFullYear()
-  const rand = Math.random().toString(36).slice(2, 7).toUpperCase()
-  return `NGP-${year}-${rand}`
+  // 8 alphanumeric chars → 36^8 ≈ 2.8 trillion combinations, collision-safe
+  const a = Math.random().toString(36).slice(2, 7).toUpperCase()
+  const b = Math.random().toString(36).slice(2, 5).toUpperCase()
+  return `NGP-${year}-${(a + b).slice(0, 8)}`
 }
 
 export type EnrollmentInput = {

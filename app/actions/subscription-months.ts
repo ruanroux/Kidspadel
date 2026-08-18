@@ -394,7 +394,13 @@ export async function getRevenueReport(year = BILLING_START_YEAR): Promise<Reven
 export async function updateMonthStatus(
   id: number,
   status: "outstanding" | "paid" | "partial",
-  opts?: { paymentReference?: string; notes?: string; discountPct?: number; discountReason?: string; paidCents?: number },
+  opts?: {
+    paymentReference?: string
+    notes?: string
+    discountPct?: number
+    discountReason?: string
+    paidCents?: number
+  },
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     await requireAdmin()
@@ -476,7 +482,7 @@ export async function autoMarkMonthPaidFromWebhook(
   const targetRow = currentMonthRow ?? existing[0]
 
   if (!targetRow) {
-    // No outstanding month found — insert one for current month and mark paid
+    // No outstanding month found ��� insert one for current month and mark paid
     await db
       .insert(subscriptionMonths)
       .values({

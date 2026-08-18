@@ -278,15 +278,23 @@ export async function buildNetcashPayment(input: BuildNetcashPaymentInput): Prom
   const firstName = nameParts[0] ?? input.parentName
   const lastName  = nameParts.slice(1).join(" ") || undefined
 
+  // itemName (p5) is what Netcash shows in the "Description" column on their
+  // transaction list. We embed the enrollment reference here so every Netcash
+  // transaction can be matched back to a sign-up at a glance.
+  // IMPORTANT: Netcash rejects special characters like | — / \ in p5 and p6.
+  // Use only alphanumeric, spaces, hyphens, and dots.
+  const itemName = `${input.referenceNumber} ${input.packageName}`
+  const itemDescription =
+    input.paymentType === "once-off"
+      ? `Once-off enrollment ${input.referenceNumber} ${input.packageName}`
+      : `Monthly subscription ${input.referenceNumber} ${input.packageName}`
+
   const formFields = buildNetcashPayNowFields({
     serviceKey,
     orderReference: input.referenceNumber,
     amount: input.packagePrice.toFixed(2),
-    itemName: `Next Gen Padel — ${input.packageName}`,
-    itemDescription:
-      input.paymentType === "once-off"
-        ? `Once-off enrollment fee for ${input.packageName}`
-        : `Monthly subscription for ${input.packageName}`,
+    itemName,
+    itemDescription,
     notifyUrl:  `${baseUrl}/api/netcash/notify`,
     returnUrl:  `${baseUrl}/enrollment/success?ref=${encodeURIComponent(input.referenceNumber)}&name=${encodeURIComponent(input.parentName)}`,
     cancelUrl:  `${baseUrl}/enrollment?cancelled=1`,
