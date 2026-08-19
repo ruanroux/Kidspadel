@@ -275,6 +275,13 @@ export const coaches = pgTable("coaches", {
   published: boolean("published").notNull().default(true),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  // Coach portal login access — managed via app/actions/coach-auth.ts.
+  // These columns already exist on the live coaches table; adding them
+  // here keeps Drizzle's schema in sync so getCoaches() can surface the
+  // current login email / account status back to the admin UI.
+  email: text("email"),
+  passwordHash: text("passwordHash"),
+  accountStatus: text("accountStatus").notNull().default("active"),
 })
 
 export type Coach = typeof coaches.$inferSelect

@@ -15,6 +15,11 @@ export type CoachRow = {
   sortOrder: number
   published: boolean
   clubIds: number[]
+  // Admin-only login status — never populated for public-facing queries
+  // (getPublishedCoaches / getCoachesByClub map their own field lists).
+  loginEmail?: string | null
+  hasPassword?: boolean
+  accountStatus?: string
 }
 
 
@@ -48,6 +53,11 @@ export async function getCoaches(): Promise<CoachRow[]> {
     imageUrl: r.imageUrl ?? null,
     sortOrder: r.sortOrder,
     published: r.published,
+    // Admin-only fields — surfaced so the Login Access panel can confirm
+    // what's actually saved instead of always rendering blank inputs.
+    loginEmail: r.email ?? null,
+    hasPassword: !!r.passwordHash,
+    accountStatus: r.accountStatus,
   }))
   return attachClubIds(base)
 }

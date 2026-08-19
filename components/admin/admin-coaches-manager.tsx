@@ -126,11 +126,28 @@ function fromDisplayUrl(url: string | null | undefined): string | null {
 // Login access panel — shown inside each CoachCard for existing coaches
 // ---------------------------------------------------------------------------
 
-function CoachLoginAccess({ coachId, coachName }: { coachId: number; coachName: string }) {
+function CoachLoginAccess({
+  coachId,
+  coachName,
+  initialLoginEmail,
+  initialHasPassword,
+  initialAccountStatus,
+}: {
+  coachId: number
+  coachName: string
+  initialLoginEmail?: string | null
+  initialHasPassword?: boolean
+  initialAccountStatus?: string
+}) {
   const [open, setOpen] = useState(false)
   const [email, setEmail] = useState("")
   const [emailMsg, setEmailMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [emailPending, startEmail] = useTransition()
+
+  // Tracks what's actually saved on the server, so the panel always shows
+  // proof of persistence instead of the write-only input going blank.
+  const [savedEmail, setSavedEmail] = useState<string | null>(initialLoginEmail ?? null)
+  const [savedHasPassword, setSavedHasPassword] = useState<boolean>(!!initialHasPassword)
 
   const [newPassword, setNewPassword] = useState("")
   const [showPw, setShowPw] = useState(false)
@@ -139,16 +156,21 @@ function CoachLoginAccess({ coachId, coachName }: { coachId: number; coachName: 
 
   const [statusPending, startStatus] = useTransition()
   const [statusMsg, setStatusMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [savedStatus, setSavedStatus] = useState<string>(initialAccountStatus ?? "active")
 
   if (coachId === 0) return null // unsaved coach — nothing to manage yet
 
   function handleSetEmail() {
     if (!email.includes("@")) { setEmailMsg({ ok: false, text: "Enter a valid email." }); return }
     setEmailMsg(null)
+    const submitted = email.trim().toLowerCase()
     startEmail(async () => {
-      const res = await adminSetCoachEmail(coachId, email)
-      setEmailMsg({ ok: res.ok, text: res.ok ? "Email updated." : res.error ?? "Failed." })
-      if (res.ok) setEmail("")
+      const res = await adminSetCoachEmail(coachId, submitted)
+      setEmailMsg({ ok: res.ok, text: res.ok ? "Email saved." : res.error ?? "Failed." })
+      if (res.ok) {
+        setSavedEmail(submitted)
+        setEmail("")
+      }
     })
   }
 
@@ -161,11 +183,12 @@ function CoachLoginAccess({ coachId, coachName }: { coachId: number; coachName: 
         setPwMsg({ ok: false, text: res.error ?? "Failed." })
         return
       }
+      setSavedHasPassword(true)
       setPwMsg({
         ok: true,
         text: res.emailSent
-          ? "Password updated — invite email sent to the coach."
-          : `Password updated. ${res.emailError ?? "Invite email could not be sent."}`,
+          ? "Password saved — invite email sent to the coach."
+          : `Password saved. ${res.emailError ?? "Invite email could not be sent."}`,
       })
       setNewPassword("")
     })
@@ -176,6 +199,7 @@ function CoachLoginAccess({ coachId, coachName }: { coachId: number; coachName: 
     startStatus(async () => {
       const res = await adminSetCoachStatus(coachId, status)
       setStatusMsg({ ok: res.ok, text: res.ok ? `Account ${status}.` : res.error ?? "Failed." })
+      if (res.ok) setSavedStatus(status)
     })
   }
 
@@ -215,6 +239,15 @@ function CoachLoginAccess({ coachId, coachName }: { coachId: number; coachName: 
               <Mail className="h-3.5 w-3.5" />
               Login email
             </p>
+            <p className="mb-1.5 text-xs">
+              {savedEmail ? (
+                <span className="text-muted-foreground">
+                  Currently saved: <span className="font-semibold text-navy">{savedEmail}</span>
+                </span>
+              ) : (
+                <span className="text-muted-foreground">No login email saved yet.</span>
+              )}
+            </p>
             <div className="flex gap-2">
               <input
                 type="email"
@@ -249,6 +282,13 @@ function CoachLoginAccess({ coachId, coachName }: { coachId: number; coachName: 
             <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-navy">
               <KeyRound className="h-3.5 w-3.5" />
               Set / reset password
+            </p>
+            <p className="mb-1.5 text-xs">
+              {savedHasPassword ? (
+                <span className="font-semibold text-emerald-600">Password is set — this coach can log in.</span>
+              ) : (
+                <span className="font-semibold text-amber-600">No password set yet — this coach cannot log in.</span>
+              )}
             </p>
             <p className="mb-1.5 text-xs text-muted-foreground">
               Saving a password automatically emails the coach an invite with their login email and this password — set the login email above first.
@@ -298,12 +338,19 @@ function CoachLoginAccess({ coachId, coachName }: { coachId: number; coachName: 
               <ShieldCheck className="h-3.5 w-3.5" />
               Account status
             </p>
+            <p className="mb-1.5 text-xs text-muted-foreground">
+              Currently: <span className="font-semibold text-navy">{savedStatus === "suspended" ? "Suspended" : "Active"}</span>
+            </p>
             <div className="flex gap-2">
               <button
                 type="button"
                 disabled={statusPending}
                 onClick={() => handleSetStatus("active")}
-                className="flex items-center gap-1.5 rounded-md bg-lime/15 border border-lime/30 px-3 py-2 text-xs font-bold text-[#2d4800] hover:bg-lime/25 disabled:opacity-50 transition-colors"
+                className={`flex items-center gap-1.5 rounded-md border px-3 py-2 text-xs font-bold transition-colors disabled:opacity-50 ${
+                  savedStatus === "active"
+                    ? "bg-lime/25 border-lime text-[#2d4800]"
+                    : "bg-lime/15 border-lime/30 text-[#2d4800] hover:bg-lime/25"
+                }`}
               >
                 <ShieldCheck className="h-3.5 w-3.5" />
                 Activate
@@ -312,7 +359,11 @@ function CoachLoginAccess({ coachId, coachName }: { coachId: number; coachName: 
                 type="button"
                 disabled={statusPending}
                 onClick={() => handleSetStatus("suspended")}
-                className="flex items-center gap-1.5 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50 transition-colors"
+                className={`flex items-center gap-1.5 rounded-md border px-3 py-2 text-xs font-bold transition-colors disabled:opacity-50 ${
+                  savedStatus === "suspended"
+                    ? "bg-red-100 border-red-300 text-red-700"
+                    : "bg-red-50 border-red-200 text-red-700 hover:bg-red-100"
+                }`}
               >
                 <ShieldOff className="h-3.5 w-3.5" />
                 Suspend
@@ -534,7 +585,13 @@ function CoachCard({
         {saveError && <p className="text-xs text-destructive">{saveError}</p>}
       </div>
 
-      <CoachLoginAccess coachId={coach.id} coachName={coach.name} />
+      <CoachLoginAccess
+        coachId={coach.id}
+        coachName={coach.name}
+        initialLoginEmail={coach.loginEmail}
+        initialHasPassword={coach.hasPassword}
+        initialAccountStatus={coach.accountStatus}
+      />
     </fieldset>
   )
 }
