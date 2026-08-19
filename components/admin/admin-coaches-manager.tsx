@@ -157,8 +157,17 @@ function CoachLoginAccess({ coachId, coachName }: { coachId: number; coachName: 
     setPwMsg(null)
     startPw(async () => {
       const res = await adminSetCoachPassword(coachId, newPassword)
-      setPwMsg({ ok: res.ok, text: res.ok ? "Password updated." : res.error ?? "Failed." })
-      if (res.ok) setNewPassword("")
+      if (!res.ok) {
+        setPwMsg({ ok: false, text: res.error ?? "Failed." })
+        return
+      }
+      setPwMsg({
+        ok: true,
+        text: res.emailSent
+          ? "Password updated — invite email sent to the coach."
+          : `Password updated. ${res.emailError ?? "Invite email could not be sent."}`,
+      })
+      setNewPassword("")
     })
   }
 
@@ -209,9 +218,14 @@ function CoachLoginAccess({ coachId, coachName }: { coachId: number; coachName: 
             <div className="flex gap-2">
               <input
                 type="email"
+                name={`coach-${coachId}-login-email`}
                 placeholder="coach@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                autoComplete="off"
+                data-1p-ignore
+                data-lpignore="true"
+                data-form-type="other"
                 className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-lime"
               />
               <button
@@ -236,13 +250,21 @@ function CoachLoginAccess({ coachId, coachName }: { coachId: number; coachName: 
               <KeyRound className="h-3.5 w-3.5" />
               Set / reset password
             </p>
+            <p className="mb-1.5 text-xs text-muted-foreground">
+              Saving a password automatically emails the coach an invite with their login email and this password — set the login email above first.
+            </p>
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <input
                   type={showPw ? "text" : "password"}
+                  name={`coach-${coachId}-new-password`}
                   placeholder="New password (min 6 chars)"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
+                  autoComplete="new-password"
+                  data-1p-ignore
+                  data-lpignore="true"
+                  data-form-type="other"
                   className="w-full rounded-md border border-border bg-background px-3 py-2 pr-10 text-sm outline-none focus:border-lime"
                 />
                 <button

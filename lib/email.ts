@@ -121,6 +121,76 @@ export async function sendWelcomeEmail(data: WelcomeEmailData): Promise<{ ok: bo
 }
 
 // ---------------------------------------------------------------------------
+// Coach portal invite — sent to a coach when admin sets/resets their login
+// ---------------------------------------------------------------------------
+
+export type CoachWelcomeEmailData = {
+  to: string
+  coachName: string
+  password: string
+  portalUrl: string
+  isNewAccount: boolean
+}
+
+export async function sendCoachWelcomeEmail(
+  data: CoachWelcomeEmailData,
+): Promise<{ ok: boolean; error?: string }> {
+  const resend = getResend()
+  if (!resend) {
+    console.log("[email] RESEND_API_KEY not set — skipping coach welcome email")
+    return { ok: false, error: "RESEND_API_KEY not configured" }
+  }
+  const FROM = getFrom()
+
+  const name = escapeHtml(data.coachName)
+  const email = escapeHtml(data.to)
+  const password = escapeHtml(data.password)
+  const url = escapeHtml(data.portalUrl)
+  const heading = data.isNewAccount ? "Welcome to the Coaching Portal" : "Your Coaching Portal Password Was Reset"
+  const intro = data.isNewAccount
+    ? `You've been added as a coach at NextGen Padel Academy. Here are your login details for the coaching portal:`
+    : `Your coaching portal password has been reset by an admin. Here are your updated login details:`
+
+  const html = `
+  <div style="font-family: Arial, Helvetica, sans-serif; max-width: 560px; margin: 0 auto; color: #0d1c3d;">
+    <div style="background:#0d1c3d; padding: 24px; border-radius: 12px 12px 0 0;">
+      <h1 style="color:#ffffff; margin:0; font-size: 22px;">${heading}</h1>
+    </div>
+    <div style="border:1px solid #e5e7eb; border-top:none; padding: 24px; border-radius: 0 0 12px 12px;">
+      <p>Hi ${name},</p>
+      <p>${intro}</p>
+      <table style="width:100%; border-collapse: collapse; margin: 16px 0;">
+        <tr><td style="padding:6px 0; color:#6b7280; width:120px;">Portal</td><td style="padding:6px 0;"><a href="${url}" style="color:#0d1c3d; font-weight:bold;">${url}</a></td></tr>
+        <tr><td style="padding:6px 0; color:#6b7280;">Email</td><td style="padding:6px 0; font-weight:bold;">${email}</td></tr>
+        <tr><td style="padding:6px 0; color:#6b7280;">Password</td><td style="padding:6px 0; font-weight:bold;">${password}</td></tr>
+      </table>
+      <p>Sign in with your email address as your username and the password above. We recommend keeping this email for your records.</p>
+      <p style="margin-top: 24px;">See you on the court!<br/><strong>The NextGen Padel Academy Team</strong></p>
+    </div>
+  </div>`
+
+  try {
+    const { error } = await resend.emails.send({
+      from: FROM,
+      to: data.to,
+      subject: data.isNewAccount
+        ? "Welcome to the NextGen Padel Academy Coaching Portal"
+        : "Your NextGen Padel Academy Coaching Portal password was reset",
+      html,
+    })
+    if (error) {
+      console.log("[email] Coach welcome email Resend error:", JSON.stringify(error))
+      return { ok: false, error: resendErrorMessage(error) }
+    }
+    console.log("[email] Coach welcome email sent to", data.to)
+    return { ok: true }
+  } catch (err) {
+    console.log("[email] sendCoachWelcomeEmail threw:", err)
+    return { ok: false, error: err instanceof Error ? err.message : "Unknown error" }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Admin notification — sent to the academy inbox on every new signup
 // ---------------------------------------------------------------------------
 
