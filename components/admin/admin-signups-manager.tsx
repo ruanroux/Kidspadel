@@ -685,8 +685,6 @@ export function AdminSignupsManager({
       {customizingSlots && (
         <CustomizeTimeSlotsModal
           signup={customizingSlots}
-          allPackages={allPackages}
-          allClubs={allClubs}
           pending={pending}
           onSave={(input) => handleSaveTimeSlots(customizingSlots, input)}
           onClose={() => setCustomizingSlots(null)}
@@ -991,25 +989,16 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 
 function CustomizeTimeSlotsModal({
   signup: s,
-  allPackages,
-  allClubs,
   pending,
   onSave,
   onClose,
 }: {
   signup: AdminSignup
-  allPackages: PublicPackage[]
-  allClubs: Club[]
   pending: boolean
   onSave: (input: { slotWeekday: number; slotHour: number; slotWeekday2?: number | null; slotHour2?: number | null }) => Promise<{ ok: boolean; error?: string }>
   onClose: () => void
 }) {
-  const selectedPkg = allPackages.find((p) => p.name === s.packageName) ?? null
-  const isCustom = selectedPkg?.slotType === "custom"
   const isAdvanced = /advanced/i.test(s.packageName)
-  const selectedClub = allClubs.find((c) => c.name === s.club) ?? null
-  const clubId = s.clubId ?? selectedClub?.id
-  const ageGroup = ageGroupFromAge(s.childAge)
 
   const [slotWeekday, setSlotWeekday] = useState(s.slotWeekday != null ? String(s.slotWeekday) : "")
   const [slotHour, setSlotHour] = useState(s.slotHour != null ? String(parseFloat(s.slotHour)) : "")
@@ -1017,11 +1006,6 @@ function CustomizeTimeSlotsModal({
   const [slotHour2, setSlotHour2] = useState(s.slotHour2 != null ? String(parseFloat(s.slotHour2)) : "")
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-
-  const selectedSlot: SelectedSlot | null =
-    slotWeekday !== "" && slotHour !== "" ? { weekday: Number(slotWeekday), hour: Number(slotHour) } : null
-  const selectedSlot2: SelectedSlot | null =
-    slotWeekday2 !== "" && slotHour2 !== "" ? { weekday: Number(slotWeekday2), hour: Number(slotHour2) } : null
 
   async function handleSubmit() {
     setError(null)
@@ -1069,87 +1053,55 @@ function CustomizeTimeSlotsModal({
         </div>
 
         <div className="space-y-4 px-6 py-5 text-sm">
+          <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+            This overrides the normal club schedule for this client only — any day and time can be selected here,
+            even ones not usually offered for their age group.
+          </p>
+
           {error && (
             <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs font-medium text-destructive">{error}</p>
           )}
 
-          {isCustom && selectedPkg ? (
-            <div className="space-y-4">
-              <div>
-                <p className="mb-2 text-xs font-semibold text-navy">
-                  Weekly Time Slot{isAdvanced ? " 1" : ""}
-                </p>
-                <PackageSlotPicker
-                  packageId={selectedPkg.id}
-                  packageName={selectedPkg.name}
-                  ageGroup={ageGroup}
-                  clubId={clubId}
-                  selected={selectedSlot}
-                  onSelect={(slot) => {
-                    setSlotWeekday(String(slot.weekday))
-                    setSlotHour(String(slot.hour))
-                  }}
-                />
+          <div className="space-y-4">
+            <div>
+              <p className="mb-2 text-xs font-semibold text-navy">
+                Weekly Time Slot{isAdvanced ? " 1" : ""}
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Day">
+                  <select value={slotWeekday} onChange={(e) => setSlotWeekday(e.target.value)} className={selectCls}>
+                    <option value="">— not set —</option>
+                    {WEEKDAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                  </select>
+                </Field>
+                <Field label="Time">
+                  <select value={slotHour} onChange={(e) => setSlotHour(e.target.value)} className={selectCls}>
+                    <option value="">— not set —</option>
+                    {HOURS.map((h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
+                  </select>
+                </Field>
               </div>
-              {isAdvanced && (
-                <div>
-                  <p className="mb-2 text-xs font-semibold text-navy">Weekly Time Slot 2</p>
-                  <PackageSlotPicker
-                    packageId={selectedPkg.id}
-                    packageName={selectedPkg.name}
-                    ageGroup={ageGroup}
-                    clubId={clubId}
-                    selected={selectedSlot2}
-                    onSelect={(slot) => {
-                      setSlotWeekday2(String(slot.weekday))
-                      setSlotHour2(String(slot.hour))
-                    }}
-                  />
-                </div>
-              )}
             </div>
-          ) : (
-            <div className="space-y-4">
+            {isAdvanced && (
               <div>
-                <p className="mb-2 text-xs font-semibold text-navy">
-                  Weekly Time Slot{isAdvanced ? " 1" : ""}
-                </p>
+                <p className="mb-2 text-xs font-semibold text-navy">Weekly Time Slot 2</p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Field label="Day">
-                    <select value={slotWeekday} onChange={(e) => setSlotWeekday(e.target.value)} className={selectCls}>
+                    <select value={slotWeekday2} onChange={(e) => setSlotWeekday2(e.target.value)} className={selectCls}>
                       <option value="">— not set —</option>
                       {WEEKDAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
                     </select>
                   </Field>
                   <Field label="Time">
-                    <select value={slotHour} onChange={(e) => setSlotHour(e.target.value)} className={selectCls}>
+                    <select value={slotHour2} onChange={(e) => setSlotHour2(e.target.value)} className={selectCls}>
                       <option value="">— not set —</option>
                       {HOURS.map((h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
                     </select>
                   </Field>
                 </div>
               </div>
-              {isAdvanced && (
-                <div>
-                  <p className="mb-2 text-xs font-semibold text-navy">Weekly Time Slot 2</p>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Field label="Day">
-                      <select value={slotWeekday2} onChange={(e) => setSlotWeekday2(e.target.value)} className={selectCls}>
-                        <option value="">— not set —</option>
-                        {WEEKDAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
-                      </select>
-                    </Field>
-                    <Field label="Time">
-                      <select value={slotHour2} onChange={(e) => setSlotHour2(e.target.value)} className={selectCls}>
-                        <option value="">— not set —</option>
-                        {HOURS.map((h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
-                      </select>
-                    </Field>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {/* Footer */}
