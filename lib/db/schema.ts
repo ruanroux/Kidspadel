@@ -172,6 +172,8 @@ export const enrollments = pgTable("enrollments", {
   slotWeekday2: integer("slotWeekday2"),
   slotHour2: numeric("slotHour2", { precision: 4, scale: 1 }),
   slotAgeGroup2: text("slotAgeGroup2"),
+  // True once an admin has manually customized this client's time slot(s) away from the default
+  scheduleCustomized: boolean("scheduleCustomized").notNull().default(false),
   // Debit order
   debitAccountHolder: text("debitAccountHolder"),
   debitBankName: text("debitBankName"),

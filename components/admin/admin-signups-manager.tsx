@@ -15,6 +15,7 @@ import {
   regenerateContract,
   resendWelcome,
   updateSignup,
+  updateClientTimeSlots,
   deactivateSignup,
   reactivateSignup,
   createSignup,
@@ -94,6 +95,7 @@ export function AdminSignupsManager({
   const [toast, setToast] = useState<{ id: number; ok: boolean; msg: string } | null>(null)
   const [editing, setEditing] = useState<AdminSignup | null>(null)
   const [viewing, setViewing] = useState<AdminSignup | null>(null)
+  const [customizingSlots, setCustomizingSlots] = useState<AdminSignup | null>(null)
   const [expanded, setExpanded] = useState<number | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
   const [confirmDeactivateId, setConfirmDeactivateId] = useState<number | null>(null)
@@ -184,6 +186,37 @@ export function AdminSignupsManager({
     })
   }
 
+  function handleSaveTimeSlots(
+    signup: AdminSignup,
+    input: { slotWeekday: number; slotHour: number; slotWeekday2?: number | null; slotHour2?: number | null },
+  ) {
+    return new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      startTransition(async () => {
+        const res = await updateClientTimeSlots(signup.id, input)
+        if (res.ok) {
+          const slotLabel = formatSlot(input.slotWeekday, input.slotHour)
+          const slotLabel2 =
+            input.slotWeekday2 != null && input.slotHour2 != null ? formatSlot(input.slotWeekday2, input.slotHour2) : null
+          const updatedFields = {
+            slotWeekday: input.slotWeekday,
+            slotHour: String(input.slotHour),
+            slotLabel,
+            slotWeekday2: input.slotWeekday2 ?? null,
+            slotHour2: input.slotHour2 != null ? String(input.slotHour2) : null,
+            slotLabel2,
+            scheduleCustomized: true,
+          }
+          setSignups((prev) => prev.map((p) => (p.id === signup.id ? { ...p, ...updatedFields } : p)))
+          setViewing((prev) => (prev && prev.id === signup.id ? { ...prev, ...updatedFields } : prev))
+          setCustomizingSlots(null)
+          flash(signup.id, true, "Time slots successfully updated.")
+          router.refresh()
+        }
+        resolve(res)
+      })
+    })
+  }
+
   function handleDeactivate(id: number) {
     startTransition(async () => {
       const res = await deactivateSignup(id)
@@ -256,6 +289,7 @@ export function AdminSignupsManager({
             input.slotWeekday2 != null && input.slotHour2 != null
               ? formatSlot(input.slotWeekday2, input.slotHour2)
               : null,
+          scheduleCustomized: false,
           emergencyContactName: input.emergencyContactName || null,
           emergencyContactPhone: input.emergencyContactPhone || null,
           debitAccountHolder: null,
@@ -549,6 +583,9 @@ export function AdminSignupsManager({
                   {/* Actions — icon-only with title tooltips */}
                   <td className="px-2 py-2">
                     <div className="flex items-center justify-end gap-0.5">
+                      <IconBtn title="View client profile" onClick={() => setViewing(s)}>
+                        <Eye className="h-3.5 w-3.5" />
+                      </IconBtn>
                       <IconBtn title="Edit sign-up" onClick={() => setEditing(s)}>
                         <Pencil className="h-3.5 w-3.5" />
                       </IconBtn>
@@ -628,6 +665,31 @@ export function AdminSignupsManager({
           allClubs={allClubs}
           onSave={(input) => handleSaveEdit(editing, input)}
           onClose={() => setEditing(null)}
+        />
+      )}
+
+      {/* Client profile view modal */}
+      {viewing && (
+        <ViewModal
+          signup={viewing}
+          onClose={() => setViewing(null)}
+          onEdit={() => {
+            setEditing(viewing)
+            setViewing(null)
+          }}
+          onCustomizeSlots={() => setCustomizingSlots(viewing)}
+        />
+      )}
+
+      {/* Customize time slots modal */}
+      {customizingSlots && (
+        <CustomizeTimeSlotsModal
+          signup={customizingSlots}
+          allPackages={allPackages}
+          allClubs={allClubs}
+          pending={pending}
+          onSave={(input) => handleSaveTimeSlots(customizingSlots, input)}
+          onClose={() => setCustomizingSlots(null)}
         />
       )}
 
@@ -782,14 +844,14 @@ function IconBtn({
 
 function ViewModal({
   signup: s,
-  packagePeriod,
   onClose,
   onEdit,
+  onCustomizeSlots,
 }: {
   signup: AdminSignup
-  packagePeriod: string
   onClose: () => void
   onEdit: () => void
+  onCustomizeSlots: () => void
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 pt-10">
@@ -848,6 +910,25 @@ function ViewModal({
               <DetailRow label="Session 1" value={s.slotLabel || "TBC"} />
               {s.slotLabel2 && <DetailRow label="Session 2" value={s.slotLabel2} />}
               <DetailRow label="Coach" value={s.coachName || "—"} />
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <div className="flex items-center gap-1.5">
+                  <dt className="text-xs text-muted-foreground">Schedule</dt>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      s.scheduleCustomized ? "bg-lime/20 text-navy" : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {s.scheduleCustomized ? "Customized" : "Default"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={onCustomizeSlots}
+                  className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-semibold text-navy hover:bg-muted"
+                >
+                  Customize Time Slots
+                </button>
+              </div>
             </DetailSection>
             {/* Payment */}
             <DetailSection title="Payment">
@@ -899,6 +980,197 @@ function DetailRow({ label, value }: { label: string; value: string }) {
     <div className="flex gap-2 text-sm">
       <dt className="w-32 shrink-0 text-muted-foreground">{label}</dt>
       <dd className="font-medium text-navy">{value}</dd>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Customize time slots modal — focused, schedule-only edit for one client.
+// Leaves package, club, coach, payment, and every other field untouched.
+// ---------------------------------------------------------------------------
+
+function CustomizeTimeSlotsModal({
+  signup: s,
+  allPackages,
+  allClubs,
+  pending,
+  onSave,
+  onClose,
+}: {
+  signup: AdminSignup
+  allPackages: PublicPackage[]
+  allClubs: Club[]
+  pending: boolean
+  onSave: (input: { slotWeekday: number; slotHour: number; slotWeekday2?: number | null; slotHour2?: number | null }) => Promise<{ ok: boolean; error?: string }>
+  onClose: () => void
+}) {
+  const selectedPkg = allPackages.find((p) => p.name === s.packageName) ?? null
+  const isCustom = selectedPkg?.slotType === "custom"
+  const isAdvanced = /advanced/i.test(s.packageName)
+  const selectedClub = allClubs.find((c) => c.name === s.club) ?? null
+  const clubId = s.clubId ?? selectedClub?.id
+  const ageGroup = ageGroupFromAge(s.childAge)
+
+  const [slotWeekday, setSlotWeekday] = useState(s.slotWeekday != null ? String(s.slotWeekday) : "")
+  const [slotHour, setSlotHour] = useState(s.slotHour != null ? String(parseFloat(s.slotHour)) : "")
+  const [slotWeekday2, setSlotWeekday2] = useState(s.slotWeekday2 != null ? String(s.slotWeekday2) : "")
+  const [slotHour2, setSlotHour2] = useState(s.slotHour2 != null ? String(parseFloat(s.slotHour2)) : "")
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  const selectedSlot: SelectedSlot | null =
+    slotWeekday !== "" && slotHour !== "" ? { weekday: Number(slotWeekday), hour: Number(slotHour) } : null
+  const selectedSlot2: SelectedSlot | null =
+    slotWeekday2 !== "" && slotHour2 !== "" ? { weekday: Number(slotWeekday2), hour: Number(slotHour2) } : null
+
+  async function handleSubmit() {
+    setError(null)
+    if (slotWeekday === "" || slotHour === "") {
+      setError("Please select a weekly time slot.")
+      return
+    }
+    if (isAdvanced) {
+      if (slotWeekday2 === "" || slotHour2 === "") {
+        setError("This is an Advanced package — please select both weekly time slots.")
+        return
+      }
+      if (Number(slotWeekday) === Number(slotWeekday2) && Number(slotHour) === Number(slotHour2)) {
+        setError("Time Slot 1 and Time Slot 2 cannot be the same.")
+        return
+      }
+    }
+    setSaving(true)
+    const res = await onSave({
+      slotWeekday: Number(slotWeekday),
+      slotHour: Number(slotHour),
+      slotWeekday2: isAdvanced && slotWeekday2 !== "" ? Number(slotWeekday2) : null,
+      slotHour2: isAdvanced && slotHour2 !== "" ? Number(slotHour2) : null,
+    })
+    setSaving(false)
+    if (!res.ok) {
+      setError(res.error ?? "Failed to update time slots.")
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 pt-10">
+      <div className="w-full max-w-lg rounded-xl bg-card shadow-2xl">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
+          <div>
+            <h2 className="text-base font-bold text-navy">Customize Time Slots</h2>
+            <p className="text-xs text-muted-foreground">
+              {s.childName} · {s.packageName}
+            </p>
+          </div>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-muted">
+            <X className="h-4 w-4 text-muted-foreground" />
+          </button>
+        </div>
+
+        <div className="space-y-4 px-6 py-5 text-sm">
+          {error && (
+            <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs font-medium text-destructive">{error}</p>
+          )}
+
+          {isCustom && selectedPkg ? (
+            <div className="space-y-4">
+              <div>
+                <p className="mb-2 text-xs font-semibold text-navy">
+                  Weekly Time Slot{isAdvanced ? " 1" : ""}
+                </p>
+                <PackageSlotPicker
+                  packageId={selectedPkg.id}
+                  packageName={selectedPkg.name}
+                  ageGroup={ageGroup}
+                  clubId={clubId}
+                  selected={selectedSlot}
+                  onSelect={(slot) => {
+                    setSlotWeekday(String(slot.weekday))
+                    setSlotHour(String(slot.hour))
+                  }}
+                />
+              </div>
+              {isAdvanced && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-navy">Weekly Time Slot 2</p>
+                  <PackageSlotPicker
+                    packageId={selectedPkg.id}
+                    packageName={selectedPkg.name}
+                    ageGroup={ageGroup}
+                    clubId={clubId}
+                    selected={selectedSlot2}
+                    onSelect={(slot) => {
+                      setSlotWeekday2(String(slot.weekday))
+                      setSlotHour2(String(slot.hour))
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <p className="mb-2 text-xs font-semibold text-navy">
+                  Weekly Time Slot{isAdvanced ? " 1" : ""}
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Day">
+                    <select value={slotWeekday} onChange={(e) => setSlotWeekday(e.target.value)} className={selectCls}>
+                      <option value="">— not set —</option>
+                      {WEEKDAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Time">
+                    <select value={slotHour} onChange={(e) => setSlotHour(e.target.value)} className={selectCls}>
+                      <option value="">— not set —</option>
+                      {HOURS.map((h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
+                    </select>
+                  </Field>
+                </div>
+              </div>
+              {isAdvanced && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-navy">Weekly Time Slot 2</p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="Day">
+                      <select value={slotWeekday2} onChange={(e) => setSlotWeekday2(e.target.value)} className={selectCls}>
+                        <option value="">— not set —</option>
+                        {WEEKDAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Time">
+                      <select value={slotHour2} onChange={(e) => setSlotHour2(e.target.value)} className={selectCls}>
+                        <option value="">— not set —</option>
+                        {HOURS.map((h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
+                      </select>
+                    </Field>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-end gap-2 border-t border-border px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-border px-4 py-2 text-xs font-semibold text-navy hover:bg-muted"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={saving || pending}
+            className="rounded-md bg-navy px-4 py-2 text-xs font-semibold text-white hover:bg-navy/90 disabled:opacity-50"
+          >
+            {saving || pending ? "Saving…" : "Save Changes"}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

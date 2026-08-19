@@ -32,6 +32,7 @@ export type AdminSignup = {
   slotWeekday2: number | null
   slotHour2: string | null
   slotLabel2: string | null
+  scheduleCustomized: boolean
   emergencyContactName: string | null
   emergencyContactPhone: string | null
   debitAccountHolder: string | null
@@ -96,6 +97,7 @@ export async function getAllSignups(): Promise<AdminSignup[]> {
     slotWeekday2: r.slotWeekday2 ?? null,
     slotHour2: r.slotHour2 ?? null,
     slotLabel2: r.slotWeekday2 != null && r.slotHour2 != null ? formatSlot(r.slotWeekday2, parseFloat(String(r.slotHour2))) : null,
+    scheduleCustomized: r.scheduleCustomized ?? false,
     emergencyContactName: r.emergencyContactName ?? null,
     emergencyContactPhone: r.emergencyContactPhone ?? null,
     debitAccountHolder: r.debitAccountHolder ?? null,
@@ -152,6 +154,69 @@ export async function updateSignup(
     return { ok: true }
   } catch (err) {
     console.log("[v0] updateSignup error:", err)
+    return { ok: false, error: err instanceof Error ? err.message : "Update failed" }
+  }
+}
+
+export type UpdateTimeSlotsInput = {
+  slotWeekday: number
+  slotHour: number
+  slotWeekday2?: number | null
+  slotHour2?: number | null
+}
+
+/**
+ * Focused, schedule-only update for a single client's weekly time slot(s).
+ * Advanced packages require two distinct slots; all other packages keep exactly one.
+ * Only touches slot fields + scheduleCustomized — no other enrollment data is modified.
+ */
+export async function updateClientTimeSlots(
+  id: number,
+  input: UpdateTimeSlotsInput,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await requireAdmin()
+
+    const rows = await db.select().from(enrollments).where(eq(enrollments.id, id)).limit(1)
+    const row = rows[0]
+    if (!row) return { ok: false, error: "Enrollment not found" }
+
+    const isAdvanced = /advanced/i.test(row.packageName)
+
+    if (input.slotWeekday == null || input.slotHour == null) {
+      return { ok: false, error: "A weekly time slot is required" }
+    }
+
+    let slotWeekday2: number | null = null
+    let slotHour2: number | null = null
+
+    if (isAdvanced) {
+      if (input.slotWeekday2 == null || input.slotHour2 == null) {
+        return { ok: false, error: "Advanced packages require two weekly time slots" }
+      }
+      if (input.slotWeekday === input.slotWeekday2 && input.slotHour === input.slotHour2) {
+        return { ok: false, error: "Time Slot 1 and Time Slot 2 cannot be the same" }
+      }
+      slotWeekday2 = input.slotWeekday2
+      slotHour2 = input.slotHour2
+    }
+
+    await db
+      .update(enrollments)
+      .set({
+        slotWeekday: input.slotWeekday,
+        slotHour: String(input.slotHour),
+        slotWeekday2,
+        slotHour2: slotHour2 != null ? String(slotHour2) : null,
+        scheduleCustomized: true,
+        updatedAt: new Date(),
+      })
+      .where(eq(enrollments.id, id))
+
+    revalidatePath("/admin")
+    return { ok: true }
+  } catch (err) {
+    console.log("[v0] updateClientTimeSlots error:", err)
     return { ok: false, error: err instanceof Error ? err.message : "Update failed" }
   }
 }
