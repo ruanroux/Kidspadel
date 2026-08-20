@@ -75,6 +75,7 @@ export async function selfGetEnrollments(): Promise<CoachingEnrollment[]> {
     slotWeekday2: r.slotWeekday2 ?? null,
     slotHour2: r.slotHour2 != null ? Number(r.slotHour2) : null,
     assignedCoachId: r.coachId ?? null,
+    assignedCoachId2: r.coachId2 ?? r.coachId ?? null,
   }))
 }
 

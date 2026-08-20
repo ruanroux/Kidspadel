@@ -35,8 +35,12 @@ export type CoachingEnrollment = {
   // Slot 2 (advanced package)
   slotWeekday2: number | null
   slotHour2: number | null
-  // Which coach is formally assigned to this enrollment
+  // Which coach is formally assigned to slot 1 (slotWeekday/slotHour)
   assignedCoachId?: number | null
+  // Which coach is formally assigned to slot 2 (slotWeekday2/slotHour2).
+  // Null means slot 2 has never been split off from slot 1 — it still
+  // follows assignedCoachId until reassigned independently.
+  assignedCoachId2?: number | null
 }
 
 export type AttendanceRecord = {
@@ -165,6 +169,7 @@ export async function getCoachEnrollments(coachId: number): Promise<CoachingEnro
       slotWeekday2: enrollments.slotWeekday2,
       slotHour2: enrollments.slotHour2,
       coachId: enrollments.coachId,
+      coachId2: enrollments.coachId2,
     })
     .from(enrollments)
     .where(
@@ -188,16 +193,27 @@ export async function getCoachEnrollments(coachId: number): Promise<CoachingEnro
     slotWeekday2: r.slotWeekday2 ?? null,
     slotHour2: r.slotHour2 != null ? Number(r.slotHour2) : null,
     assignedCoachId: r.coachId ?? null,
+    // Slot 2 falls back to slot 1's coach until it's been split off independently.
+    assignedCoachId2: r.coachId2 ?? r.coachId ?? null,
   }))
 }
 
 /**
- * Reassign a single enrollment to a different coach.
+ * Reassign a single enrollment's session to a different coach.
  * Used by the admin conflict-resolution panel.
+ *
+ * An advanced-package enrollment has two independent weekly sessions
+ * (slot 1: slotWeekday/slotHour, slot 2: slotWeekday2/slotHour2), each with
+ * its own coach column (coachId/coachName and coachId2/coachName2). `slotNum`
+ * selects which session's coach is being changed — omitting it, or passing 1,
+ * updates slot 1 only. This lets e.g. slot 1 (Tuesday) go to one coach and
+ * slot 2 (Wednesday) go to a different coach on the same enrollment, without
+ * one save overwriting the other.
  */
 export async function reassignEnrollment(
   enrollmentId: number,
-  newCoachId: number
+  newCoachId: number,
+  slotNum: 1 | 2 = 1
 ): Promise<{ ok: boolean; error?: string }> {
   await requireAdmin()
   try {
@@ -209,7 +225,11 @@ export async function reassignEnrollment(
     if (!coachRow.length) return { ok: false, error: "Coach not found" }
     await db
       .update(enrollments)
-      .set({ coachId: newCoachId, coachName: coachRow[0].name })
+      .set(
+        slotNum === 2
+          ? { coachId2: newCoachId, coachName2: coachRow[0].name }
+          : { coachId: newCoachId, coachName: coachRow[0].name }
+      )
       .where(eq(enrollments.id, enrollmentId))
     revalidatePath("/admin")
     return { ok: true }

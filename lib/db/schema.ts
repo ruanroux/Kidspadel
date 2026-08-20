@@ -203,9 +203,14 @@ export const enrollments = pgTable("enrollments", {
   // 'pending' | 'complete' | 'failed' | 'cancelled'
   paymentStatus: text("paymentStatus").notNull().default("pending"),
   payfastPaymentId: text("payfastPaymentId"),
-  // Coach assignment
+  // Coach assignment — for slot 1 (slotWeekday/slotHour)
   coachId: integer("coachId"),
   coachName: text("coachName"),
+  // Coach assignment for slot 2 (slotWeekday2/slotHour2), when an advanced
+  // package's two weekly sessions are split between two different coaches.
+  // Falls back to coachId/coachName when null (single coach covers both).
+  coachId2: integer("coachId2"),
+  coachName2: text("coachName2"),
   // Status
   status: text("status").notNull().default("pending"),
   accountStatus: text("accountStatus").notNull().default("active"),

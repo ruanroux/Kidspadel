@@ -864,12 +864,15 @@ export function AdminCoachingPortal({
           allCoaches={initialCoaches}
           enrollments={enrollments}
           selectedCoachId={selectedCoachId}
-          onReassign={(enrollmentId, newCoachId) => {
-            // Update local state immediately
+          onReassign={(enrollmentId, newCoachId, slotNum) => {
+            // Update local state immediately — only the reassigned slot's
+            // coach field changes, so the other slot (if any) keeps its coach.
             setEnrollments((prev) =>
               prev.map((e) =>
                 e.enrollmentId === enrollmentId
-                  ? { ...e, assignedCoachId: newCoachId }
+                  ? slotNum === 2
+                    ? { ...e, assignedCoachId2: newCoachId }
+                    : { ...e, assignedCoachId: newCoachId }
                   : e
               )
             )
@@ -1059,27 +1062,32 @@ function ConflictPanel({
   allCoaches: CoachOption[]
   enrollments: CoachingEnrollment[]
   selectedCoachId: number | null
-  onReassign: (enrollmentId: number, newCoachId: number) => void
+  onReassign: (enrollmentId: number, newCoachId: number, slotNum: 1 | 2) => void
 }) {
   const [pending, startTransition] = useTransition()
-  const [reassigning, setReassigning] = useState<number | null>(null)
-  const [selectedNew, setSelectedNew] = useState<Record<number, number>>({})
-  const [flash, setFlash] = useState<Record<number, "ok" | "error">>({})
+  // Keyed by `${enrollmentId}-${slotNum}` so a student's Tuesday session and
+  // Wednesday session (same enrollment, two different slots) track their own
+  // pending/selection/flash state independently — otherwise picking a new
+  // coach for one day's row was also selecting it for the other day's row.
+  const [reassigning, setReassigning] = useState<string | null>(null)
+  const [selectedNew, setSelectedNew] = useState<Record<string, number>>({})
+  const [flash, setFlash] = useState<Record<string, "ok" | "error">>({})
 
-  function handleReassign(enrollmentId: number) {
-    const newCoachId = selectedNew[enrollmentId]
+  function handleReassign(enrollmentId: number, slotNum: 1 | 2) {
+    const rowKey = `${enrollmentId}-${slotNum}`
+    const newCoachId = selectedNew[rowKey]
     if (!newCoachId) return
-    setReassigning(enrollmentId)
+    setReassigning(rowKey)
     startTransition(async () => {
-      const res = await reassignEnrollment(enrollmentId, newCoachId)
+      const res = await reassignEnrollment(enrollmentId, newCoachId, slotNum)
       setReassigning(null)
       if (res.ok) {
-        onReassign(enrollmentId, newCoachId)
-        setFlash((f) => ({ ...f, [enrollmentId]: "ok" }))
-        setTimeout(() => setFlash((f) => { const n = { ...f }; delete n[enrollmentId]; return n }), 2000)
+        onReassign(enrollmentId, newCoachId, slotNum)
+        setFlash((f) => ({ ...f, [rowKey]: "ok" }))
+        setTimeout(() => setFlash((f) => { const n = { ...f }; delete n[rowKey]; return n }), 2000)
       } else {
-        setFlash((f) => ({ ...f, [enrollmentId]: "error" }))
-        setTimeout(() => setFlash((f) => { const n = { ...f }; delete n[enrollmentId]; return n }), 3000)
+        setFlash((f) => ({ ...f, [rowKey]: "error" }))
+        setTimeout(() => setFlash((f) => { const n = { ...f }; delete n[rowKey]; return n }), 3000)
       }
     })
   }
@@ -1151,14 +1159,20 @@ function ConflictPanel({
 
           {/* Rows */}
           <div className="divide-y divide-border/60">
-            {group.entries.map(({ enrollment: enr }) => {
-              const assignedCoach = allCoaches.find((c) => c.id === enr.assignedCoachId)
-              const isDone = flash[enr.enrollmentId] === "ok"
-              const isErr = flash[enr.enrollmentId] === "error"
-              const isMoving = reassigning === enr.enrollmentId
+            {group.entries.map(({ enrollment: enr, slotNum }) => {
+              // Each row represents one specific weekly session (slot 1 or slot 2)
+              // for this student, so it must read/write that slot's own coach —
+              // never the other slot's — even though both slots live on the same
+              // enrollment record.
+              const currentCoachId = slotNum === 2 ? enr.assignedCoachId2 : enr.assignedCoachId
+              const assignedCoach = allCoaches.find((c) => c.id === currentCoachId)
+              const rowKey = `${enr.enrollmentId}-${slotNum}`
+              const isDone = flash[rowKey] === "ok"
+              const isErr = flash[rowKey] === "error"
+              const isMoving = reassigning === rowKey
 
               return (
-                <div key={enr.enrollmentId} className={`flex items-center gap-3 px-4 py-3 transition-colors ${isDone ? "bg-lime/5" : ""}`}>
+                <div key={rowKey} className={`flex items-center gap-3 px-4 py-3 transition-colors ${isDone ? "bg-lime/5" : ""}`}>
                   {/* Avatar */}
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-navy/10 text-xs font-bold text-navy">
                     {enr.childName.charAt(0).toUpperCase()}
@@ -1178,21 +1192,21 @@ function ConflictPanel({
                   <div className="flex items-center gap-2 shrink-0">
                     <select
                       className="rounded-md border border-border bg-background px-2 py-1.5 text-xs font-medium text-navy focus:outline-none focus:ring-1 focus:ring-navy"
-                      value={selectedNew[enr.enrollmentId] ?? ""}
+                      value={selectedNew[rowKey] ?? ""}
                       onChange={(e) =>
-                        setSelectedNew((s) => ({ ...s, [enr.enrollmentId]: Number(e.target.value) }))
+                        setSelectedNew((s) => ({ ...s, [rowKey]: Number(e.target.value) }))
                       }
                     >
                       <option value="">Move to...</option>
                       {allCoaches
-                        .filter((c) => c.id !== enr.assignedCoachId)
+                        .filter((c) => c.id !== currentCoachId)
                         .map((c) => (
                           <option key={c.id} value={c.id}>{c.name}</option>
                         ))}
                     </select>
                     <button
-                      disabled={!selectedNew[enr.enrollmentId] || isMoving || pending}
-                      onClick={() => handleReassign(enr.enrollmentId)}
+                      disabled={!selectedNew[rowKey] || isMoving || pending}
+                      onClick={() => handleReassign(enr.enrollmentId, slotNum)}
                       className="flex items-center gap-1 rounded-md bg-navy px-3 py-1.5 text-xs font-semibold text-white hover:bg-navy/80 disabled:opacity-40 transition-colors"
                     >
                       <ArrowLeftRight className="h-3 w-3" />
